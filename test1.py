@@ -3,7 +3,7 @@ import time
 import mediapipe as mp
 
 mp_pose = mp.solutions.pose
-pose = mp_pose.Pose(model_complexity=1)   # 0 = lightning-fast, 2 = highest accuracy
+pose = mp_pose.Pose(model_complexity=0)   # 0 = lightning-fast, 2 = highest accuracy
 mp_drawing = mp.solutions.drawing_utils
 
 cap = cv2.VideoCapture(0)                 # 0 → default webcam
