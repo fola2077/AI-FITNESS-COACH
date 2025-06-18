@@ -41,19 +41,19 @@ class PoseDetector:
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         results = self._pose.process(frame_rgb)
 
+        # inside detect()
+        ...
         if not results.pose_landmarks:
             return None
 
-        landmarks = []
+        pixel_list = []
         for lm in results.pose_landmarks.landmark:
-            landmarks.append(
-                Landmark2D(
-                    x=int(lm.x * w),
-                    y=int(lm.y * h),
-                    visibility=lm.visibility,
-                )
+            pixel_list.append(
+                Landmark2D(int(lm.x * w), int(lm.y * h), lm.visibility)
             )
-        return landmarks
+
+        return pixel_list, results.pose_landmarks 
+
 
     def close(self):
         self._pose.close()

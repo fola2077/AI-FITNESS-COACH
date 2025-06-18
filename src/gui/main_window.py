@@ -1,3 +1,11 @@
+import time
+from collections import deque
+
+import mediapipe as mp                              #  add this
+_MP_DRAW = mp.solutions.drawing_utils               #  add this
+_MP_STYLE = mp.solutions.drawing_styles             #  add this
+
+
 from PySide6.QtWidgets import QMainWindow, QWidget, QPushButton, QVBoxLayout, QApplication
 from PySide6.QtCore     import QTimer, Qt
 import sys
@@ -6,6 +14,9 @@ import cv2
 from capture.camera        import CameraManager
 from gui.widgets.video_widget import VideoWidget
 from pose.pose_detector    import PoseDetector, Landmark2D
+
+from preprocess.one_euro import OneEuroFilter
+import time
 
 
 
@@ -16,6 +27,13 @@ class MainWindow(QMainWindow):
         # Initialize camera and pose detector
         self.camera = CameraManager()
         self.pose_detector = PoseDetector()
+
+        # One-Euro filters – one (x,y) pair for each of the 33 pose landmarks
+        self._filters = {
+            idx: (OneEuroFilter(), OneEuroFilter())   # (filter_x, filter_y)
+            for idx in range(33)
+        }
+
         
         # Create the main widget and layout
         main_widget = QWidget()
@@ -26,6 +44,8 @@ class MainWindow(QMainWindow):
         
         # Create video widget
         self.video_widget = VideoWidget()
+        self._frame_times = deque(maxlen=30)   # store last 30 frame durations
+        self._last_ts = time.perf_counter()
         layout.addWidget(self.video_widget)
         
         # Create control buttons
@@ -52,22 +72,50 @@ class MainWindow(QMainWindow):
         self.timer.stop()
 
     def _update_frame(self):
+        # --- timing section ---
+        now = time.perf_counter()
+        self._frame_times.append(now - self._last_ts)
+        self._last_ts = now
+        fps = 1.0 / (sum(self._frame_times) / len(self._frame_times)) if self._frame_times else 0
+
+
         frame = self.camera.get_frame()
         if frame is None:
             return
 
-        landmarks = self.pose_detector.detect(frame)
+        detected = self.pose_detector.detect(frame)
 
-        # ----- rudimentary overlay: hips & knees -----
-        if landmarks:
-            # MediaPipe indices: 23 L-hip, 24 R-hip, 25 L-knee, 26 R-knee
-            key_ids = (23, 24, 25, 26)
-            for idx in key_ids:
-                lm: Landmark2D = landmarks[idx]
-                if lm.visibility > 0.5:               # ignore occluded pts
-                    cv2.circle(frame, (lm.x, lm.y), 6, (0, 255, 0), -1)
+        if detected:
+            # unpack tuple: pixel landmarks list, and original mp_landmarks proto
+            lm_pixel, mp_landmarks = detected
 
+            # ------------ One-Euro smoothing ------------
+            now = time.perf_counter()
+            for idx, lm in enumerate(lm_pixel):
+                fx, fy = self._filters[idx]
+                lm.x = int(fx.filter(lm.x, now))
+                lm.y = int(fy.filter(lm.y, now))
+            # --------------------------------------------
+
+            _MP_DRAW.draw_landmarks(
+                frame,
+                mp_landmarks,                         # still raw proto used for colours
+                mp.solutions.pose.POSE_CONNECTIONS,
+                landmark_drawing_spec=_MP_STYLE.get_default_pose_landmarks_style()
+            )
+
+        cv2.putText(
+            frame,
+            f"FPS: {fps:5.1f}",
+            (10, 30),                    # x,y position
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,                         # font scale
+            (0, 0, 255),               # text colour (B,G,R)
+            2,                           # thickness
+            cv2.LINE_AA,
+        )
         self.video_widget.update_frame(frame)
+
 
     def closeEvent(self, event):
         self.pose_detector.close()
@@ -78,6 +126,6 @@ class MainWindow(QMainWindow):
 def run():
     app = QApplication(sys.argv)
     w = MainWindow()
-    w.resize(800, 600)
+    w.resize(1200, 800)
     w.show()
     sys.exit(app.exec())
