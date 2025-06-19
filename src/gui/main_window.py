@@ -7,7 +7,9 @@ import mediapipe as mp
 _MP_DRAW = mp.solutions.drawing_utils
 _MP_STYLE = mp.solutions.drawing_styles
 
-from PySide6.QtWidgets import QMainWindow, QWidget, QPushButton, QVBoxLayout, QApplication
+from PySide6.QtWidgets import (QMainWindow, QWidget, QPushButton, QVBoxLayout, 
+                               QHBoxLayout, QApplication, QFileDialog, QLabel, 
+                               QSlider, QComboBox)
 from PySide6.QtCore import QTimer, Qt
 import sys
 import cv2
@@ -24,100 +26,236 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        # Initialize camera and pose detector
-        self.setWindowTitle("AI Fitness Coach – Early Slice")
-        
-        # OPTIMIZATION 1: Use faster camera settings
-        self.camera = CameraManager(width=640, height=480, fps=30)
-        
-        # OPTIMIZATION 2: Use lowest model complexity for speed
+        # Initialize
+        self.setWindowTitle("AI Fitness Coach – Video/Live Testing")
+        self.camera = None
         self.pose_detector = PoseDetector(
-            model_complexity=0,  # Keep this at 0 for speed
-            min_detection_confidence=0.7,  # Lower threshold for faster detection
+            model_complexity=0,
+            min_detection_confidence=0.5,
             min_tracking_confidence=0.5
         )
 
-        # One-Euro filters – one (x,y) pair for each of the 33 pose landmarks
+        # One-Euro filters
         self._filters = {
             idx: (OneEuroFilter(), OneEuroFilter())
             for idx in range(33)
         }
 
-        # Create the main widget and layout
+        # UI State
+        self.is_playing = False
+        self.is_video_mode = False
+        
+        # Performance tracking
+        self._frame_times = deque(maxlen=30)
+        self._last_ts = time.perf_counter()
+        self.phase = "TOP"
+        self.knee_ang = 0.0
+
+        self._setup_ui()
+        self._setup_timer()
+        
+        # Start with live camera by default
+        self._switch_to_live()
+
+    def _setup_ui(self):
+        """Setup the user interface."""
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         
         layout = QVBoxLayout()
         main_widget.setLayout(layout)
         
-        # Create video widget
+        # Video widget
         self.video_widget = VideoWidget()
-        self._frame_times = deque(maxlen=30)
-        self._last_ts = time.perf_counter()
-
-        self.phase = "TOP"
-        self.knee_ang = 0.0  # Cache knee angle to avoid recalculation
-
         layout.addWidget(self.video_widget)
         
-        # Create control buttons
-        self.start_button = QPushButton("Start")
-        self.stop_button = QPushButton("Stop")
-        layout.addWidget(self.start_button)
-        layout.addWidget(self.stop_button)
+        # Control panel
+        control_panel = QHBoxLayout()
         
-        # OPTIMIZATION 3: Use more aggressive timer for 30 FPS
+        # Source selection
+        self.source_combo = QComboBox()
+        self.source_combo.addItems(["Live Camera", "Video File"])
+        self.source_combo.currentTextChanged.connect(self._on_source_changed)
+        control_panel.addWidget(QLabel("Source:"))
+        control_panel.addWidget(self.source_combo)
+        
+        # File selection button
+        self.file_button = QPushButton("Select Video File")
+        self.file_button.clicked.connect(self._select_video_file)
+        self.file_button.setEnabled(False)
+        control_panel.addWidget(self.file_button)
+        
+        # Play/Pause button
+        self.play_button = QPushButton("Pause")
+        self.play_button.clicked.connect(self._toggle_playback)
+        control_panel.addWidget(self.play_button)
+        
+        # Restart button (for videos)
+        self.restart_button = QPushButton("Restart")
+        self.restart_button.clicked.connect(self._restart_video)
+        self.restart_button.setEnabled(False)
+        control_panel.addWidget(self.restart_button)
+        
+        layout.addLayout(control_panel)
+        
+        # Video progress slider (for video files)
+        self.progress_slider = QSlider(Qt.Horizontal)
+        self.progress_slider.setEnabled(False)
+        self.progress_slider.valueChanged.connect(self._on_slider_changed)
+        layout.addWidget(self.progress_slider)
+        
+        # Info labels
+        self.info_label = QLabel("Live Camera Mode")
+        layout.addWidget(self.info_label)
+        
+    def _setup_timer(self):
+        """Setup the frame update timer."""
         self.timer = QTimer()
         self.timer.timeout.connect(self._update_frame)
         
-        # Connect buttons
-        self.start_button.clicked.connect(self.start_capture)
-        self.stop_button.clicked.connect(self.stop_capture)
+    def _on_source_changed(self, source_text):
+        """Handle source selection change."""
+        if source_text == "Video File":
+            self.file_button.setEnabled(True)
+            self.restart_button.setEnabled(True)
+            self.progress_slider.setEnabled(True)
+        else:
+            self.file_button.setEnabled(False)
+            self.restart_button.setEnabled(False)
+            self.progress_slider.setEnabled(False)
+            self._switch_to_live()
+    
+    def _select_video_file(self):
+        """Open file dialog to select video file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Select Video File", 
+            "", 
+            "Video Files (*.mp4 *.avi *.mov *.mkv *.wmv *.flv);;All Files (*)"
+        )
         
-        # Start capture automatically
-        self.start_capture()
-
-    def start_capture(self):
-        # OPTIMIZATION 4: 30 FPS = 33.33ms, but use 30ms for buffer
-        self.timer.start(30)  # More aggressive timing for 30+ FPS
+        if file_path:
+            self._switch_to_video(file_path)
+    
+    def _switch_to_live(self):
+        """Switch to live camera mode."""
+        self._stop_playback()
         
-    def stop_capture(self):
+        if self.camera:
+            self.camera.release()
+        
+        try:
+            self.camera = CameraManager(source=0)  # Camera ID 0
+            self.is_video_mode = False
+            self.info_label.setText("Live Camera Mode")
+            self.source_combo.setCurrentText("Live Camera")
+            self._start_playback()
+        except RuntimeError as e:
+            self.info_label.setText(f"Camera Error: {e}")
+    
+    def _switch_to_video(self, video_path):
+        """Switch to video file mode."""
+        self._stop_playback()
+        
+        if self.camera:
+            self.camera.release()
+        
+        try:
+            self.camera = CameraManager(source=video_path)
+            self.is_video_mode = True
+            
+            # Setup progress slider
+            self.progress_slider.setMaximum(self.camera.total_frames - 1)
+            self.progress_slider.setValue(0)
+            
+            # Update info
+            current_time, total_time = self.camera.get_time_info()
+            self.info_label.setText(
+                f"Video: {video_path.split('/')[-1]} | "
+                f"Duration: {total_time:.1f}s | "
+                f"FPS: {self.camera.video_fps:.1f}"
+            )
+            
+            self._start_playback()
+            
+        except RuntimeError as e:
+            self.info_label.setText(f"Video Error: {e}")
+    
+    def _start_playback(self):
+        """Start video playback."""
+        if self.camera:
+            # Use different timer intervals based on source
+            if self.is_video_mode:
+                # Match video FPS, but cap at 30 FPS for performance
+                interval = max(33, int(1000 / self.camera.video_fps))
+            else:
+                interval = 30  # 30ms for live camera (30+ FPS)
+            
+            self.timer.start(interval)
+            self.is_playing = True
+            self.play_button.setText("Pause")
+    
+    def _stop_playback(self):
+        """Stop video playback."""
         self.timer.stop()
+        self.is_playing = False
+        self.play_button.setText("Play")
+    
+    def _toggle_playback(self):
+        """Toggle play/pause."""
+        if self.is_playing:
+            self._stop_playback()
+        else:
+            self._start_playback()
+    
+    def _restart_video(self):
+        """Restart video from beginning."""
+        if self.camera and self.is_video_mode:
+            self.camera.restart_video()
+            self.progress_slider.setValue(0)
+    
+    def _on_slider_changed(self, value):
+        """Handle progress slider changes."""
+        if self.camera and self.is_video_mode and not self.is_playing:
+            self.camera.seek_to_frame(value)
 
     def _update_frame(self):
-        # ---------- FPS timing ----------
+        """Main frame update loop."""
+        if not self.camera:
+            return
+            
+        # FPS timing
         now = time.perf_counter()
         if self._frame_times:
             self._frame_times.append(now - self._last_ts)
         else:
-            self._frame_times.append(0.033)  # Initialize with target frame time
+            self._frame_times.append(0.033)
         self._last_ts = now
         fps = 1.0 / (sum(self._frame_times) / len(self._frame_times)) if self._frame_times else 30
 
-        # ---------- grab frame ----------
+        # Get frame
         frame = self.camera.get_frame()
         if frame is None:
             return
 
+        # Pose detection
         detected = self.pose_detector.detect(frame)
 
         if detected:
-            # unpack tuple: (pixel-coords list, raw MediaPipe proto)
             lm_pixel, mp_landmarks = detected
 
-            # ---------- One-Euro smoothing ----------
+            # One-Euro smoothing
             for idx, lm in enumerate(lm_pixel):
                 fx, fy = self._filters[idx]
                 lm.x = int(fx.filter(lm.x, now))
                 lm.y = int(fy.filter(lm.y, now))
 
-            # ---------- right-knee angle ----------
+            # Right-knee angle
             hip, knee, ankle = lm_pixel[24], lm_pixel[26], lm_pixel[28]
             if hip.visibility > 0.5 and knee.visibility > 0.5 and ankle.visibility > 0.5:
                 self.knee_ang = joint_angle(hip.x, hip.y, knee.x, knee.y, ankle.x, ankle.y)
-            # Don't reset to 0.0 if visibility is low - keep last valid angle
 
-            # ---------- phase detector ----------
+            # Phase detection
             prev_phase = self.phase
             if self.knee_ang > 140:
                 self.phase = "TOP"
@@ -128,15 +266,14 @@ class MainWindow(QMainWindow):
             elif self.knee_ang > 120 and prev_phase in ("BOTTOM", "ASC"):
                 self.phase = "ASC"
 
-            # OPTIMIZATION 5: Draw skeleton only - remove style for speed
+            # Draw skeleton
             _MP_DRAW.draw_landmarks(
                 frame,
                 mp_landmarks,
                 mp.solutions.pose.POSE_CONNECTIONS,
-                # Remove the style parameter for faster drawing
             )
 
-        # OPTIMIZATION 6: Always draw text (even without detection) but use cached values
+        # Draw text overlay
         cv2.putText(frame, f"FPS: {fps:5.1f}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
 
@@ -146,18 +283,35 @@ class MainWindow(QMainWindow):
         cv2.putText(frame, f"Phase: {self.phase}", (10, 90),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2, cv2.LINE_AA)
 
-        # ---------- push to widget ----------
+        # Video-specific info
+        if self.is_video_mode:
+            progress = self.camera.get_progress()
+            current_time, total_time = self.camera.get_time_info()
+            
+            cv2.putText(frame, f"Progress: {progress:.1f}%", (10, 120),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
+            
+            cv2.putText(frame, f"Time: {current_time:.1f}s / {total_time:.1f}s", (10, 150),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
+            
+            # Update progress slider
+            if self.is_playing:
+                self.progress_slider.setValue(self.camera.frame_count)
+
+        # Update display
         self.video_widget.update_frame(frame)
 
     def closeEvent(self, event):
+        """Handle window close event."""
         self.pose_detector.close()
-        self.camera.release()
+        if self.camera:
+            self.camera.release()
         super().closeEvent(event)
 
 
 def run():
     app = QApplication(sys.argv)
     w = MainWindow()
-    w.resize(1200, 800)
+    w.resize(1200, 900)
     w.show()
     sys.exit(app.exec())
