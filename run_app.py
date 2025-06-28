@@ -1,14 +1,23 @@
-# ai-fitness-coach/run_app.py
-import pathlib
 import sys
+import os
+from PySide6.QtWidgets import QApplication
 
-# 1.  Add src/ to import search path *first*
-project_root = pathlib.Path(__file__).resolve().parent
-src_path = project_root / "src"
-sys.path.insert(0, str(src_path))
+# Add the project's root directory to the Python path
+# This allows for absolute imports from the 'src' directory
+# (e.g., 'from src.gui.main_window import MainWindow')
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
-# 2.  Now we can safely import from packages inside src/
-from gui.main_window import run   # noqa: E402  (import after sys.path tweak is intentional)
+# Import MainWindow after the path has been adjusted
+from src.gui.main_window import MainWindow # noqa: E402
 
-if __name__ == "__main__":
-    run()
+def run_application():
+    """
+    Initializes and runs the main Qt application.
+    """
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+
+if __name__ == '__main__':
+    run_application()

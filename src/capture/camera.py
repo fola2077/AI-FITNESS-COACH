@@ -102,3 +102,9 @@ class CameraManager:
         if self.cap:
             self.cap.release()
             self.cap = None
+    
+    def isOpened(self):
+        """Check if the camera or video file is opened."""
+        return self.cap is not None and self.cap.isOpened()
+    
+    
