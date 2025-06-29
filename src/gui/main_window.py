@@ -1,4 +1,5 @@
 import sys
+import cv2
 from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLabel, QFileDialog
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import Qt, QTimer
@@ -9,17 +10,16 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AI Fitness Coach")
-        self.setGeometry(100, 100, 1280, 720)
+        # --- FIX: Set a default starting size for the window ---
+        self.resize(1280, 720)
 
-        # --- UI Elements ---
         self.video_label = QLabel("Press 'Webcam' or 'Open Video' to start")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setScaledContents(True)
+        self.video_label.setScaledContents(False)
 
         self.webcam_button = QPushButton("Webcam")
         self.video_button = QPushButton("Open Video")
 
-        # --- Layout ---
         layout = QVBoxLayout()
         layout.addWidget(self.video_label)
         layout.addWidget(self.webcam_button)
@@ -29,12 +29,10 @@ class MainWindow(QMainWindow):
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
 
-        # --- App State ---
         self.camera_manager = None
         self.pose_processor = PoseProcessor()
         self.timer = QTimer()
 
-        # --- Connections ---
         self.webcam_button.clicked.connect(self.start_webcam)
         self.video_button.clicked.connect(self.open_video_file)
         self.timer.timeout.connect(self.update_frame)
@@ -45,6 +43,8 @@ class MainWindow(QMainWindow):
     def open_video_file(self):
         filepath, _ = QFileDialog.getOpenFileName(self, "Open Video", "", "Video Files (*.mp4 *.avi)")
         if filepath:
+            self.video_label.setText(f"Loading video: {filepath}...")
+            QApplication.processEvents()
             self.setup_camera(source=filepath)
 
     def setup_camera(self, source):
@@ -57,7 +57,28 @@ class MainWindow(QMainWindow):
         if not self.camera_manager.isOpened():
             self.video_label.setText(f"Error: Could not open camera source '{source}'")
             return
-        self.timer.start(30) # ~33 FPS
+        
+        native_width = self.camera_manager.get_property(cv2.CAP_PROP_FRAME_WIDTH)
+        native_height = self.camera_manager.get_property(cv2.CAP_PROP_FRAME_HEIGHT)
+        
+        MAX_WIDTH = 1600
+        MAX_HEIGHT = 900
+        
+        display_width = native_width
+        display_height = native_height
+
+        if display_width > MAX_WIDTH:
+            scale = MAX_WIDTH / display_width
+            display_width = MAX_WIDTH
+            display_height = int(display_height * scale)
+
+        if display_height > MAX_HEIGHT:
+            scale = MAX_HEIGHT / display_height
+            display_height = MAX_HEIGHT
+            display_width = int(display_width * scale)
+        
+        self.resize(int(display_width), int(display_height))
+        self.timer.start(30)
 
     def update_frame(self):
         frame = self.camera_manager.get_frame()
@@ -70,9 +91,15 @@ class MainWindow(QMainWindow):
         self.display_frame(processed_frame)
 
     def display_frame(self, frame):
-        image = QImage(frame, frame.shape[1], frame.shape[0], QImage.Format_RGB888)
+        if frame is None or frame.size == 0:
+            return
+        
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image = QImage(rgb_frame, rgb_frame.shape[1], rgb_frame.shape[0], QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(image)
-        self.video_label.setPixmap(pixmap)
+        
+        scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.video_label.setPixmap(scaled_pixmap)
 
     def closeEvent(self, event):
         self.timer.stop()

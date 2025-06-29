@@ -52,24 +52,34 @@ class CameraManager:
     def get_frame(self):
         """Returns a BGR numpy.ndarray or None on read failure."""
         if not self.cap:
+            print("[CameraManager] cap is None!")
             return None
-            
+        
         if self.is_video_file:
             ok, frame = self.cap.read()
+            if not ok:
+                print(f"[CameraManager] Failed to read frame from video file: {self.source}")
             if ok:
                 self.frame_count += 1
             else:
                 # End of video - optionally loop
                 self.restart_video()
                 ok, frame = self.cap.read()
+                if not ok:
+                    print(f"[CameraManager] Still failed after restart: {self.source}")
                 if ok:
                     self.frame_count = 1
         else:
             # Live camera - grab latest frame
             self.cap.grab()
             ok, frame = self.cap.retrieve()
-        
-        return frame if ok else None
+            if not ok:
+                print("[CameraManager] Failed to retrieve frame from camera!")
+        if ok and frame is not None and frame.size != 0:
+            return frame
+        else:
+            print("[CameraManager] Frame is empty after read!")
+            return None
     
     def restart_video(self):
         """Restart video from beginning (for looping)."""
@@ -107,4 +117,9 @@ class CameraManager:
         """Check if the camera or video file is opened."""
         return self.cap is not None and self.cap.isOpened()
     
-    
+    def get_property(self, prop):
+        """Get a property from the underlying cv2.VideoCapture object."""
+        if self.cap:
+            return self.cap.get(prop)
+        return None
+
