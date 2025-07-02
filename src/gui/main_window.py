@@ -10,8 +10,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AI Fitness Coach")
-        # --- FIX: Set a default starting size for the window ---
-        self.resize(1280, 720)
+        self.resize(1280, 720) # Set a good default size
 
         self.video_label = QLabel("Press 'Webcam' or 'Open Video' to start")
         self.video_label.setAlignment(Qt.AlignCenter)
@@ -43,8 +42,6 @@ class MainWindow(QMainWindow):
     def open_video_file(self):
         filepath, _ = QFileDialog.getOpenFileName(self, "Open Video", "", "Video Files (*.mp4 *.avi)")
         if filepath:
-            self.video_label.setText(f"Loading video: {filepath}...")
-            QApplication.processEvents()
             self.setup_camera(source=filepath)
 
     def setup_camera(self, source):
@@ -53,53 +50,42 @@ class MainWindow(QMainWindow):
         if self.camera_manager:
             self.camera_manager.release()
 
-        self.camera_manager = CameraManager(source)
-        if not self.camera_manager.isOpened():
-            self.video_label.setText(f"Error: Could not open camera source '{source}'")
-            return
-        
-        native_width = self.camera_manager.get_property(cv2.CAP_PROP_FRAME_WIDTH)
-        native_height = self.camera_manager.get_property(cv2.CAP_PROP_FRAME_HEIGHT)
-        
-        MAX_WIDTH = 1600
-        MAX_HEIGHT = 900
-        
-        display_width = native_width
-        display_height = native_height
+        try:
+            self.camera_manager = CameraManager(source)
+            if not self.camera_manager.isOpened():
+                raise RuntimeError(f"Could not open source '{source}'")
+            
+            # Reset the processor for the new video/session
+            self.pose_processor.reset()
+            self.timer.start(30) # ~33 FPS
 
-        if display_width > MAX_WIDTH:
-            scale = MAX_WIDTH / display_width
-            display_width = MAX_WIDTH
-            display_height = int(display_height * scale)
-
-        if display_height > MAX_HEIGHT:
-            scale = MAX_HEIGHT / display_height
-            display_height = MAX_HEIGHT
-            display_width = int(display_width * scale)
-        
-        self.resize(int(display_width), int(display_height))
-        self.timer.start(30)
+        except RuntimeError as e:
+            self.video_label.setText(f"Error: {e}")
 
     def update_frame(self):
-        frame = self.camera_manager.get_frame()
-        if frame is None:
-            self.timer.stop()
-            self.video_label.setText("Video finished or frame could not be read.")
+        if not self.camera_manager:
             return
 
-        processed_frame, results = self.pose_processor.process_frame(frame)
+        frame = self.camera_manager.get_frame()
+        # Gracefully handle the end of the video
+        if frame is None:
+            self.timer.stop()
+            self.video_label.setText("Video finished or stream ended.")
+            return
+
+        processed_frame = self.pose_processor.process_frame(frame)
         self.display_frame(processed_frame)
 
     def display_frame(self, frame):
-        if frame is None or frame.size == 0:
-            return
-        
+        # The frame from the processor is already annotated (BGR)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image = QImage(rgb_frame, rgb_frame.shape[1], rgb_frame.shape[0], QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(image)
+        h, w, ch = rgb_frame.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         
-        scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.video_label.setPixmap(scaled_pixmap)
+        # Scale pixmap to fit the label while maintaining aspect ratio
+        pixmap = QPixmap.fromImage(qt_image)
+        self.video_label.setPixmap(pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def closeEvent(self, event):
         self.timer.stop()
