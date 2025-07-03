@@ -36,5 +36,5 @@ def analyze_video(video_path):
 
 if __name__ == '__main__':
     # Replace with the path to your test video
-    video_to_test = "path/to/your/video.mp4" 
+    video_to_test = "path/to/your/test_video.mp4" 
     analyze_video(video_to_test)
