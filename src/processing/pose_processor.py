@@ -257,7 +257,10 @@ class PoseProcessor:
         
         status_text = "  |  ".join(status_parts)
         
-        # Draw main status with better font size
+        # Draw main status with better contrast
+        # Add text background for better visibility
+        text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.8, thickness)[0]
+        cv2.rectangle(frame, (5, status_y - text_size[1] - 5), (text_size[0] + 15, status_y + 5), (0, 0, 0), -1)
         cv2.putText(frame, status_text, (10, status_y), 
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.8, (255, 255, 255), thickness)
         
@@ -271,44 +274,97 @@ class PoseProcessor:
             
             if angle_parts:
                 angle_text = "  |  ".join(angle_parts)
+                # Add background for angle text
+                text_size = cv2.getTextSize(angle_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, 1)[0]
+                cv2.rectangle(frame, (5, angles_y - text_size[1] - 3), (text_size[0] + 15, angles_y + 3), (0, 0, 0), -1)
                 cv2.putText(frame, angle_text, (10, angles_y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, (200, 200, 200), 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, (220, 220, 220), 1)
         
-        # Display current feedback from feedback manager
+        # Display current feedback from feedback manager with better visibility
         current_feedback = self.feedback_manager.get_current_feedback()
         if current_feedback:
             feedback_y = overlay_height + 20
             for i, feedback in enumerate(current_feedback[:2]):  # Show max 2 messages
                 color = self.get_feedback_color(feedback.priority)
+                bg_color = self.get_feedback_bg_color(feedback.priority)
                 text = feedback.message
                 
                 # Truncate long messages
                 if len(text) > 50:
                     text = text[:47] + "..."
                 
-                cv2.putText(frame, text, (10, feedback_y + i * line_height), 
+                # Calculate text position and size
+                y_pos = feedback_y + i * line_height
+                text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.7, thickness)[0]
+                
+                # Draw background rectangle for better contrast
+                padding = 8
+                cv2.rectangle(frame, 
+                            (5, y_pos - text_size[1] - padding), 
+                            (text_size[0] + 15, y_pos + padding), 
+                            bg_color, -1)
+                
+                # Draw border for emphasis
+                cv2.rectangle(frame, 
+                            (5, y_pos - text_size[1] - padding), 
+                            (text_size[0] + 15, y_pos + padding), 
+                            color, 2)
+                
+                # Draw text
+                cv2.putText(frame, text, (10, y_pos), 
                            cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.7, color, thickness)
+        
+        # Debug: Print current feedback to console for troubleshooting
+        if current_feedback:
+            print(f"Debug: Displaying {len(current_feedback)} feedback messages:")
+            for i, feedback in enumerate(current_feedback[:2]):
+                print(f"  {i+1}. [{feedback.category}] {feedback.message}")
+        else:
+            print("Debug: No active feedback messages")
+            
+        # Add a test feedback message for debugging
+        if not current_feedback:
+            # Draw a test message to verify overlay is working
+            test_y = overlay_height + 20
+            test_text = "Test: Overlay system active"
+            text_size = cv2.getTextSize(test_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, 1)[0]
+            
+            # Draw background
+            cv2.rectangle(frame, (5, test_y - text_size[1] - 5), 
+                         (text_size[0] + 15, test_y + 5), (0, 0, 0), -1)
+            # Draw text in bright green
+            cv2.putText(frame, test_text, (10, test_y), 
+                       cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, (0, 255, 0), 1)
         
         return frame
 
     def get_phase_color(self, phase):
-        """Get color based on movement phase"""
+        """Get color based on movement phase (BGR format)"""
         colors = {
-            "STANDING": (100, 255, 100),  # Light green
-            "DESCENT": (255, 255, 100),   # Yellow
-            "BOTTOM": (255, 100, 100),    # Light red
-            "ASCENT": (100, 100, 255)     # Light blue
+            "STANDING": (0, 200, 0),      # Green
+            "DESCENT": (0, 200, 255),     # Orange  
+            "BOTTOM": (0, 0, 200),        # Red
+            "ASCENT": (200, 100, 0)       # Blue
         }
         return colors.get(phase, (255, 255, 255))
 
     def get_feedback_color(self, priority):
-        """Get color based on feedback priority"""
-        if priority == 1:  # Critical
-            return (0, 0, 255)      # Red
-        elif priority == 2:  # Important
-            return (0, 165, 255)    # Orange
-        else:  # Minor
-            return (0, 255, 255)    # Yellow
+        """Get text color based on feedback priority (BGR format)"""
+        if priority == 1:  # Critical - Red text
+            return (0, 0, 200)      
+        elif priority == 2:  # Important - Orange text
+            return (0, 100, 255)    
+        else:  # Minor - Dark blue text
+            return (150, 150, 0)    
+
+    def get_feedback_bg_color(self, priority):
+        """Get background color based on feedback priority (BGR format)"""
+        if priority == 1:  # Critical - Light red background
+            return (200, 200, 255)      
+        elif priority == 2:  # Important - Light orange background
+            return (200, 240, 255)    
+        else:  # Minor - Light yellow background
+            return (200, 255, 255)
 
     def score_to_grade(self, score):
         """Convert score to letter grade"""
@@ -349,3 +405,38 @@ class PoseProcessor:
             'active_feedback': self.feedback_manager.get_current_feedback(),
             'fps': self.fps
         }
+    
+    def toggle_overlay_component(self, component, enabled):
+        """Toggle specific overlay components"""
+        if not hasattr(self, 'overlay_settings'):
+            self.overlay_settings = {
+                'show_metrics': True,
+                'show_feedback': True,
+                'show_skeleton': True,
+                'show_angles': True
+            }
+        
+        self.overlay_settings[component] = enabled
+        
+    def create_contrast_text(self, frame, text, position, font_scale, color, thickness):
+        """Draw text with background for better contrast"""
+        x, y = position
+        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+        
+        # Draw black background with some padding
+        padding = 4
+        cv2.rectangle(frame, 
+                     (x - padding, y - text_size[1] - padding), 
+                     (x + text_size[0] + padding, y + padding), 
+                     (0, 0, 0), -1)
+        
+        # Draw white border for extra contrast
+        cv2.rectangle(frame, 
+                     (x - padding, y - text_size[1] - padding), 
+                     (x + text_size[0] + padding, y + padding), 
+                     (255, 255, 255), 1)
+        
+        # Draw the text
+        cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
+        
+        return text_size
