@@ -478,13 +478,24 @@ class SessionManager:
         """Update session with current data"""
         self.session_data['total_reps'] = rep_count
         
+        # Only add form score if it's significantly different or rep count changed
         if form_score is not None:
-            self.session_data['form_scores'].append(form_score)
+            if not self.session_data['form_scores'] or rep_count != self.session_data['total_reps']:
+                self.session_data['form_scores'].append(form_score)
             
-        # Update feedback history
+        # Update feedback history - avoid duplicates by checking message and recent timestamp
         if feedback_history:
             for feedback in feedback_history:
-                if feedback not in self.session_data['feedback_history']:
+                # Check if this feedback is already recent (within last 2 seconds)
+                is_duplicate = False
+                current_time = feedback.get('timestamp', time.time())
+                for existing in self.session_data['feedback_history'][-5:]:  # Check last 5 entries
+                    if (existing.get('message') == feedback.get('message') and 
+                        abs(current_time - existing.get('timestamp', 0)) < 2.0):
+                        is_duplicate = True
+                        break
+                
+                if not is_duplicate:
                     self.session_data['feedback_history'].append(feedback)
         
         # Update fault frequency

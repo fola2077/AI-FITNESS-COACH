@@ -143,3 +143,15 @@ class SettingsDialog(QDialog):
             'smoothing_frames': self.smoothing_frames.value(),
             'min_frames_for_fault': self.min_frames_for_fault.value()
         }
+    
+    def load_settings(self, settings):
+        """Load settings into dialog controls"""
+        self.confidence_threshold.setValue(settings.get('confidence_threshold', 0.7))
+        self.back_angle_threshold.setValue(settings.get('back_angle_threshold', 25))
+        self.knee_depth_threshold.setValue(settings.get('knee_depth_threshold', 90))
+        self.symmetry_threshold.setValue(settings.get('symmetry_threshold', 15))
+        self.feedback_frequency.setCurrentText(settings.get('feedback_frequency', 'Medium'))
+        self.show_angles.setChecked(settings.get('show_angles', True))
+        self.show_skeleton.setChecked(settings.get('show_skeleton', True))
+        self.smoothing_frames.setValue(settings.get('smoothing_frames', 5))
+        self.min_frames_for_fault.setValue(settings.get('min_frames_for_fault', 3))

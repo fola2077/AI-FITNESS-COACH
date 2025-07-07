@@ -21,6 +21,7 @@ class PoseProcessor:
         self.back_angle_buffer = deque(maxlen=5)
         self.back_rounding_frames = 0
         self.current_angles = {}
+        self.current_faults = []
         self.form_score = 100
 
         # FPS calculation
@@ -49,6 +50,7 @@ class PoseProcessor:
         self.back_angle_buffer.clear()
         self.back_rounding_frames = 0
         self.current_angles = {}
+        self.current_faults = []
         self.form_score = 100
         self.feedback_manager.clear_messages()
 
@@ -70,6 +72,7 @@ class PoseProcessor:
             landmarks = pose_results.pose_landmarks.landmark
             faults, angles = self.analyze_form_improved(landmarks)
             self.current_angles = angles
+            self.current_faults = faults  # Store current faults
             
             # Calculate form score
             self.form_score = self.calculate_form_score(faults)
@@ -84,12 +87,20 @@ class PoseProcessor:
             
             metrics.update(angles)
             metrics['form_score'] = self.form_score
+        else:
+            # No pose detected
+            self.current_faults = []
 
+        # Add essential metrics
         metrics['fps'] = self.fps
+        metrics['reps'] = self.rep_counter
+        metrics['phase'] = self.phase
 
         # 4. Draw Enhanced Overlays
         annotated_frame = self.draw_overlays_improved(frame.copy(), metrics, faults, pose_results)
-        return annotated_frame
+        
+        # Return frame, metrics, and faults for the main window
+        return annotated_frame, metrics, faults
 
     def analyze_form_improved(self, landmarks):
         """Improved form analysis with better thresholds and smoothing"""
