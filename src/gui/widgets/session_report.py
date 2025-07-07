@@ -235,6 +235,9 @@ class SessionReportDialog(QDialog):
         # Fault analysis
         self.analyze_faults()
         
+        # Movement quality analysis
+        self.analyze_movement_quality()
+        
         # Feedback history
         self.populate_feedback_history()
         
@@ -248,16 +251,32 @@ class SessionReportDialog(QDialog):
         total_reps = self.session_data.get('total_reps', 0)
         avg_score = self.session_data.get('avg_form_score', 0)
         best_score = self.session_data.get('best_form_score', 0)
+        form_scores = self.session_data.get('form_scores', [])
         
-        # Performance assessment
-        if avg_score >= 90:
-            analysis.append("🌟 Excellent overall form quality! You maintained great technique throughout the session.")
-        elif avg_score >= 80:
-            analysis.append("👍 Good form quality with room for minor improvements.")
-        elif avg_score >= 70:
-            analysis.append("⚠️ Moderate form quality. Focus on the feedback to improve technique.")
+        # Performance assessment - now based on actual movement data
+        if len(form_scores) > 0:
+            # Calculate worst score for range analysis
+            worst_score = min(form_scores)
+            score_consistency = best_score - worst_score
+            
+            if avg_score >= 90:
+                analysis.append("🌟 Excellent overall form quality! You maintained great technique throughout the session.")
+            elif avg_score >= 80:
+                analysis.append("👍 Good form quality with room for minor improvements.")
+            elif avg_score >= 70:
+                analysis.append("⚠️ Moderate form quality. Focus on the feedback to improve technique.")
+            else:
+                analysis.append("📚 Form needs improvement. Consider reviewing proper squat technique.")
+            
+            # Consistency analysis based on actual score range
+            if score_consistency <= 10:
+                analysis.append("🎯 Very consistent form throughout the session.")
+            elif score_consistency <= 20:
+                analysis.append("📊 Reasonably consistent form with minor variations.")
+            else:
+                analysis.append("� Form varied significantly during the session - focus on maintaining consistent technique.")
         else:
-            analysis.append("📚 Form needs improvement. Consider reviewing proper squat technique.")
+            analysis.append("⏸️ No movement analysis available - user remained in standing position.")
         
         # Rep analysis
         if total_reps >= 20:
@@ -265,14 +284,9 @@ class SessionReportDialog(QDialog):
         elif total_reps >= 10:
             analysis.append(f"✅ Good workout with {total_reps} repetitions.")
         elif total_reps > 0:
-            analysis.append(f"👶 Getting started with {total_reps} repetitions. Keep building!")
-        
-        # Consistency analysis
-        score_range = best_score - (avg_score - 10)  # Rough estimate of consistency
-        if score_range <= 15:
-            analysis.append("🎯 Consistent form throughout the session.")
+            analysis.append(f"� Getting started with {total_reps} repetitions. Keep building!")
         else:
-            analysis.append("📈 Form varied during the session - focus on maintaining consistent technique.")
+            analysis.append("🚀 Ready to start! Begin with some practice squats.")
         
         self.performance_text.setPlainText('\n\n'.join(analysis))
         
@@ -317,6 +331,69 @@ class SessionReportDialog(QDialog):
                 fault_layout.addWidget(fault_bar)
                 
                 self.faults_layout.addWidget(fault_widget)
+        
+    def analyze_movement_quality(self):
+        """Analyze movement quality metrics and phase information"""
+        quality_analysis = []
+        
+        form_scores = self.session_data.get('form_scores', [])
+        phase_durations = self.session_data.get('phase_durations', {})
+        total_reps = self.session_data.get('total_reps', 0)
+        
+        # Form score distribution analysis
+        if form_scores:
+            quality_analysis.append(f"📊 FORM SCORE ANALYSIS")
+            quality_analysis.append(f"Total scored frames: {len(form_scores)}")
+            quality_analysis.append(f"Score range: {min(form_scores):.1f}% - {max(form_scores):.1f}%")
+            
+            # Score distribution
+            excellent_frames = len([s for s in form_scores if s >= 90])
+            good_frames = len([s for s in form_scores if 70 <= s < 90])
+            poor_frames = len([s for s in form_scores if s < 70])
+            
+            quality_analysis.append(f"Excellent form (90%+): {excellent_frames} frames ({excellent_frames/len(form_scores)*100:.1f}%)")
+            quality_analysis.append(f"Good form (70-89%): {good_frames} frames ({good_frames/len(form_scores)*100:.1f}%)")
+            quality_analysis.append(f"Needs work (<70%): {poor_frames} frames ({poor_frames/len(form_scores)*100:.1f}%)")
+        else:
+            quality_analysis.append("📊 FORM SCORE ANALYSIS")
+            quality_analysis.append("No movement scores recorded (user may have remained standing)")
+        
+        quality_analysis.append("")
+        
+        # Phase analysis
+        if phase_durations:
+            quality_analysis.append("⏱️ MOVEMENT PHASE ANALYSIS")
+            total_frames = sum(phase_durations.values())
+            
+            phase_names = {
+                'STANDING': 'Standing/Rest',
+                'DESCENT': 'Descending',
+                'BOTTOM': 'Bottom Position',
+                'ASCENT': 'Ascending',
+                'Ready': 'Ready Position'
+            }
+            
+            for phase, frame_count in phase_durations.items():
+                phase_name = phase_names.get(phase, phase)
+                percentage = (frame_count / total_frames) * 100 if total_frames > 0 else 0
+                quality_analysis.append(f"{phase_name}: {frame_count} frames ({percentage:.1f}%)")
+        
+        quality_analysis.append("")
+        
+        # Movement efficiency analysis
+        if total_reps > 0 and form_scores:
+            quality_analysis.append("💪 MOVEMENT EFFICIENCY")
+            avg_score_per_rep = len(form_scores) / total_reps if total_reps > 0 else 0
+            quality_analysis.append(f"Average scored frames per rep: {avg_score_per_rep:.1f}")
+            
+            if avg_score_per_rep < 10:
+                quality_analysis.append("⚡ Fast, explosive movements")
+            elif avg_score_per_rep > 20:
+                quality_analysis.append("🐌 Slow, controlled movements")
+            else:
+                quality_analysis.append("⚖️ Moderate tempo movements")
+        
+        self.quality_text.setPlainText('\n'.join(quality_analysis))
         
     def populate_feedback_history(self):
         """Populate feedback history tab"""
@@ -463,7 +540,8 @@ class SessionManager:
             'form_scores': [],
             'feedback_history': [],
             'fault_frequency': {},
-            'phase_transitions': []
+            'phase_transitions': [],
+            'phase_durations': {}  # Track time spent in each phase
         }
         
     def start_session(self):
@@ -474,13 +552,19 @@ class SessionManager:
         """End the current session"""
         self.session_data['end_time'] = time.time()
         
-    def update_session(self, rep_count, form_score, feedback_history, fault_data=None):
+    def update_session(self, rep_count, form_score, phase, feedback_history, fault_data=None):
         """Update session with current data"""
         self.session_data['total_reps'] = rep_count
         
-        # Only add form score if it's significantly different or rep count changed
+        # Track phase durations
+        if phase:
+            self.session_data['phase_durations'][phase] = \
+                self.session_data['phase_durations'].get(phase, 0) + 1
+        
+        # NEW, IMPROVED LOGIC: Log scores during actual movement
         if form_score is not None:
-            if not self.session_data['form_scores'] or rep_count != self.session_data['total_reps']:
+            # Log the score on every frame where the user is not just standing still
+            if phase not in ["STANDING", "Ready"]:
                 self.session_data['form_scores'].append(form_score)
             
         # Update feedback history - avoid duplicates by checking message and recent timestamp

@@ -350,6 +350,7 @@ class MainWindow(QMainWindow):
         self.session_manager.update_session(
             rep_count=metrics.get('reps', 0),
             form_score=metrics.get('form_score', 100),
+            phase=metrics.get('phase', 'STANDING'),  # Add phase information
             feedback_history=feedback_history,
             fault_data=faults
         )
