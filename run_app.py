@@ -96,7 +96,7 @@ def print_startup_info():
     """
     Print helpful startup information.
     """
-    print("🏃‍♂️ AI Fitness Coach - Squat Form Analyzer")
+    print("AI Fitness Coach - Form Analyzer")
     print("=" * 50)
     print("📋 Startup Checklist:")
     print("  • Camera/webcam connected and working")

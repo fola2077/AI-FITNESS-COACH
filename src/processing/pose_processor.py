@@ -23,6 +23,9 @@ class PoseProcessor:
         self.current_angles = {}
         self.current_faults = []
         self.form_score = 100
+        
+        # NEW: Track if user reached proper depth in current attempt
+        self.hit_bottom_this_rep = False
 
         # FPS calculation
         self.start_time = time.time()
@@ -52,6 +55,9 @@ class PoseProcessor:
         self.current_angles = {}
         self.current_faults = []
         self.form_score = 100
+        
+        # Reset attempt tracking
+        self.hit_bottom_this_rep = False
         self.feedback_manager.clear_messages()
 
     def process_frame(self, frame):
@@ -72,13 +78,21 @@ class PoseProcessor:
             landmarks = pose_results.pose_landmarks.landmark
             faults, angles = self.analyze_form_improved(landmarks)
             self.current_angles = angles
-            self.current_faults = faults  # Store current faults
             
-            # Calculate form score
-            self.form_score = self.calculate_form_score(faults)
-            
-            # Update phase detection
+            # Update phase detection (may add depth faults)
             self.update_phase_detection(angles.get('knee', 180))
+            
+            # Merge form analysis faults with phase detection faults
+            if hasattr(self, 'current_faults') and isinstance(self.current_faults, list):
+                # Combine and deduplicate faults
+                all_faults = list(set(faults + self.current_faults))
+                faults = all_faults
+                self.current_faults = all_faults
+            else:
+                self.current_faults = faults
+            
+            # Calculate form score with all faults
+            self.form_score = self.calculate_form_score(faults)
             
             # Process feedback
             self.feedback_manager.process_pose_analysis(
@@ -208,21 +222,50 @@ class PoseProcessor:
         return max(0, min(100, base_score))
 
     def update_phase_detection(self, knee_angle):
-        """Enhanced phase detection"""
+        """Enhanced phase detection with failed attempt tracking"""
         previous_phase = self.phase
         
+        # Phase transitions
         if knee_angle > 160:
+            # User is standing - check if this completes an attempt
+            if previous_phase == "ASCENT":
+                # This is the end of an attempt (successful or failed)
+                self.rep_counter += 1
+                
+                # Check if they achieved proper depth
+                if not self.hit_bottom_this_rep:
+                    # Failed attempt - add insufficient depth fault
+                    if not hasattr(self, 'current_faults'):
+                        self.current_faults = []
+                    self.current_faults.append("INSUFFICIENT_DEPTH")
+                    
+                    # Give feedback about the failed attempt
+                    if hasattr(self, 'feedback_manager'):
+                        self.feedback_manager.add_feedback(
+                            "Go deeper next time - reach full squat depth",
+                            priority=2, category="form", duration=3.0
+                        )
+                
+                # Reset for next attempt
+                self.hit_bottom_this_rep = False
+                
             self.phase = "STANDING"
+            
         elif previous_phase == "STANDING" and knee_angle < 160:
             self.phase = "DESCENT"
+            # Reset depth flag when starting new attempt
+            self.hit_bottom_this_rep = False
+            
         elif knee_angle < 100:
-            self.phase = "BOTTOM"
+            # User reached proper depth
+            self.phase = "BOTTOM" 
+            self.hit_bottom_this_rep = True
+            
         elif previous_phase == "BOTTOM" and knee_angle > 100:
             self.phase = "ASCENT"
-
-        # Rep counting - only count when returning to standing from bottom
-        if self.phase == "STANDING" and previous_phase == "ASCENT":
-            self.rep_counter += 1
+        elif previous_phase == "DESCENT" and knee_angle > 140:
+            # User is coming back up without reaching bottom - shallow squat
+            self.phase = "ASCENT"
 
     def draw_overlays_improved(self, frame, metrics, faults, pose_results=None):
         """Improved overlay with better proportions and feedback integration"""

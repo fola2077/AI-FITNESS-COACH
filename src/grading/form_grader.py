@@ -2,6 +2,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
+import copy
 
 class FaultSeverity(Enum):
     CRITICAL = "critical"  # Safety issues
@@ -30,6 +31,10 @@ class FaultDetails:
     description: str
     correction_cue: str
     penalty_weight: float
+    
+    def copy(self):
+        """Create a copy of this fault details object"""
+        return copy.deepcopy(self)
 
 class SquatFormGrader:
     """
@@ -97,6 +102,30 @@ class SquatFormGrader:
                 description='Heels lifting off ground',
                 correction_cue='Keep your heels down, improve ankle mobility',
                 penalty_weight=10
+            ),
+            'INCOMPLETE_ATTEMPT': FaultDetails(
+                fault_type='INCOMPLETE_ATTEMPT',
+                severity=FaultSeverity.MAJOR,
+                confidence=0.9,
+                description='Squat attempt not completed through full range of motion',
+                correction_cue='Focus on completing the full movement pattern',
+                penalty_weight=35
+            ),
+            'SEVERE_KNEE_VALGUS': FaultDetails(
+                fault_type='SEVERE_KNEE_VALGUS',
+                severity=FaultSeverity.CRITICAL,
+                confidence=0.0,
+                description='Dangerous knee collapse - stop immediately',
+                correction_cue='Stop movement, focus on knee tracking over toes',
+                penalty_weight=50
+            ),
+            'PARTIAL_RANGE_OF_MOTION': FaultDetails(
+                fault_type='PARTIAL_RANGE_OF_MOTION',
+                severity=FaultSeverity.MAJOR,
+                confidence=0.8,
+                description='Consistently not reaching full depth',
+                correction_cue='Work on mobility to achieve full squat depth',
+                penalty_weight=30
             )
         }
         
@@ -279,93 +308,172 @@ class SquatFormGrader:
         
         return max(0, min(100, int(technique_score)))
 
-    def _generate_detailed_feedback(self, faults: List[FaultDetails], score: int) -> Dict:
-        """Generate comprehensive feedback"""
-        feedback = {
-            'overall_grade': self._score_to_grade(score),
-            'priority_corrections': [],
-            'secondary_improvements': [],
-            'positive_aspects': []
+    def analyze_attempt_completion(self, metrics: BiomechanicalMetrics, phase: str) -> Dict:
+        """
+        Analyze if a squat attempt is complete and log any failures
+        
+        Args:
+            metrics: Current frame biomechanical metrics
+            phase: Current squat phase ('descending', 'bottom', 'ascending', 'top')
+            
+        Returns:
+            Dict containing attempt status and failure reasons
+        """
+        attempt_status = {
+            'is_complete': False,
+            'is_valid': False,
+            'failure_reasons': [],
+            'completion_score': 0,
+            'phase_reached': phase
         }
         
-        # Sort faults by severity and confidence
-        sorted_faults = sorted(faults, 
-                             key=lambda f: (f.severity.value, -f.confidence), 
-                             reverse=True)
+        # Check if attempt reached minimum depth
+        depth_reached = metrics.depth_achieved or metrics.knee_angle <= self.thresholds['depth_knee_angle']
         
-        # Categorize feedback
-        for fault in sorted_faults:
-            if fault.severity == FaultSeverity.CRITICAL:
-                feedback['priority_corrections'].append({
-                    'issue': fault.description,
-                    'correction': fault.correction_cue,
-                    'confidence': fault.confidence
-                })
-            else:
-                feedback['secondary_improvements'].append({
-                    'issue': fault.description,
-                    'correction': fault.correction_cue,
-                    'confidence': fault.confidence
-                })
+        if not depth_reached:
+            attempt_status['failure_reasons'].append('INSUFFICIENT_DEPTH')
+            attempt_status['completion_score'] = 30  # Partial credit for attempting
         
-        # Add positive feedback
-        if score >= 80:
-            feedback['positive_aspects'].append("Excellent overall form!")
-        elif score >= 70:
-            feedback['positive_aspects'].append("Good technique with room for refinement")
-        elif len([f for f in faults if f.severity == FaultSeverity.CRITICAL]) == 0:
-            feedback['positive_aspects'].append("Safe movement pattern maintained")
+        # Check if attempt completed full range of motion
+        if phase in ['ascending', 'top'] and depth_reached:
+            attempt_status['is_complete'] = True
+            attempt_status['completion_score'] = 100
+        elif phase == 'bottom' and depth_reached:
+            attempt_status['is_complete'] = True
+            attempt_status['completion_score'] = 80  # Good depth but incomplete ascent
+        elif phase == 'descending':
+            attempt_status['completion_score'] = 20  # Early in attempt
         
-        return feedback
-
-    def _generate_recommendations(self, faults: List[FaultDetails]) -> List[str]:
-        """Generate training recommendations based on faults"""
-        recommendations = []
+        # Check for safety violations that invalidate the attempt
+        safety_violations = []
         
-        fault_types = [f.fault_type for f in faults]
+        # Critical back rounding
+        if metrics.back_angle < self.thresholds['back_safety_angle']:
+            safety_violations.append('BACK_ROUNDING')
         
-        if 'BACK_ROUNDING' in fault_types:
-            recommendations.extend([
-                "Work on thoracic spine mobility",
-                "Strengthen posterior chain (glutes, hamstrings)",
-                "Practice wall sits with proper posture"
-            ])
+        # Severe knee valgus
+        if metrics.knee_valgus_ratio < 0.6:  # More strict than normal threshold
+            safety_violations.append('SEVERE_KNEE_VALGUS')
         
-        if 'KNEE_VALGUS' in fault_types:
-            recommendations.extend([
-                "Strengthen hip abductors and external rotators",
-                "Improve ankle mobility",
-                "Practice lateral band walks"
-            ])
+        # Heel rise indicating instability
+        if metrics.ankle_angle < self.thresholds['ankle_dorsiflexion']:
+            safety_violations.append('HEEL_RISE')
         
-        if 'INSUFFICIENT_DEPTH' in fault_types:
-            recommendations.extend([
-                "Work on ankle and hip mobility",
-                "Practice goblet squats",
-                "Use heel elevation initially"
-            ])
-        
-        if 'FORWARD_LEAN' in fault_types:
-            recommendations.extend([
-                "Strengthen anterior core",
-                "Improve thoracic extension mobility",
-                "Practice front-loaded squats"
-            ])
-        
-        return recommendations[:5]  # Limit to top 5 recommendations
-
-    def _score_to_grade(self, score: int) -> str:
-        """Convert numerical score to letter grade"""
-        if score >= 90:
-            return "A"
-        elif score >= 80:
-            return "B"
-        elif score >= 70:
-            return "C"
-        elif score >= 60:
-            return "D"
+        # If safety violations are present, mark as invalid
+        if safety_violations:
+            attempt_status['is_valid'] = False
+            attempt_status['failure_reasons'].extend(safety_violations)
+            attempt_status['completion_score'] = max(0, attempt_status['completion_score'] - 30)
         else:
-            return "F"
+            attempt_status['is_valid'] = True
+        
+        return attempt_status
+
+    def log_failed_attempt(self, metrics: BiomechanicalMetrics, failure_reasons: List[str]) -> Dict:
+        """
+        Log details of a failed squat attempt for learning purposes
+        
+        Args:
+            metrics: Biomechanical metrics at failure point
+            failure_reasons: List of reasons why attempt failed
+            
+        Returns:
+            Dict containing failure analysis and coaching recommendations
+        """
+        failure_analysis = {
+            'failure_type': 'INCOMPLETE_ATTEMPT',
+            'primary_reason': failure_reasons[0] if failure_reasons else 'UNKNOWN',
+            'all_reasons': failure_reasons,
+            'depth_achieved': metrics.depth_achieved,
+            'knee_angle_at_failure': metrics.knee_angle,
+            'safety_compromised': any(reason in ['BACK_ROUNDING', 'SEVERE_KNEE_VALGUS'] 
+                                   for reason in failure_reasons),
+            'coaching_points': []
+        }
+        
+        # Generate specific coaching based on failure type
+        if 'INSUFFICIENT_DEPTH' in failure_reasons:
+            failure_analysis['coaching_points'].extend([
+                "Focus on sitting back into your heels",
+                "Aim to get your hip crease below knee level",
+                "Work on ankle and hip mobility outside of training"
+            ])
+        
+        if 'BACK_ROUNDING' in failure_reasons:
+            failure_analysis['coaching_points'].extend([
+                "Stop the movement - spine safety is priority",
+                "Focus on chest up, shoulders back",
+                "Reduce depth until you can maintain spine neutrality"
+            ])
+        
+        if 'SEVERE_KNEE_VALGUS' in failure_reasons:
+            failure_analysis['coaching_points'].extend([
+                "Focus on pushing knees out over toes",
+                "Strengthen hip abductors and glutes",
+                "Reduce weight/depth until tracking improves"
+            ])
+        
+        if 'HEEL_RISE' in failure_reasons:
+            failure_analysis['coaching_points'].extend([
+                "Keep heels planted throughout movement",
+                "Work on ankle mobility and calf flexibility",
+                "Consider heel elevation temporarily"
+            ])
+        
+        return failure_analysis
+
+    def grade_incomplete_attempt(self, metrics: BiomechanicalMetrics, phase_reached: str) -> Dict:
+        """
+        Grade an incomplete squat attempt
+        
+        Args:
+            metrics: Best biomechanical metrics achieved during attempt
+            phase_reached: Furthest phase reached ('descending', 'bottom', 'ascending')
+            
+        Returns:
+            Dict containing partial scoring and feedback
+        """
+        partial_score = 0
+        feedback_points = []
+        
+        # Base score based on phase reached
+        phase_scores = {
+            'descending': 25,
+            'bottom': 60,
+            'ascending': 80,
+            'top': 100
+        }
+        
+        partial_score = phase_scores.get(phase_reached, 0)
+        
+        # Adjust score based on form quality during the attempt
+        form_analysis = self.analyze_squat_form(metrics)
+        form_quality_bonus = min(20, form_analysis['overall_score'] * 0.2)
+        partial_score += form_quality_bonus
+        
+        # Generate feedback for incomplete attempt
+        feedback_points.append(f"Attempt reached {phase_reached} phase")
+        
+        if phase_reached == 'descending':
+            feedback_points.append("Focus on completing the full range of motion")
+        elif phase_reached == 'bottom':
+            feedback_points.append("Good depth achieved, work on driving up")
+        elif phase_reached == 'ascending':
+            feedback_points.append("Nearly complete - focus on finishing strong")
+        
+        # Add form-specific feedback
+        if form_analysis['detected_faults']:
+            priority_fault = form_analysis['detected_faults'][0]
+            feedback_points.append(f"Improvement needed: {priority_fault.correction_cue}")
+        
+        return {
+            'partial_score': min(100, int(partial_score)),
+            'phase_reached': phase_reached,
+            'form_score': form_analysis['overall_score'],
+            'feedback_points': feedback_points,
+            'attempt_type': 'INCOMPLETE',
+            'recommendations': form_analysis['recommendations'][:3]  # Top 3 recommendations
+        }
 
     def batch_analyze_video(self, metrics_sequence: List[BiomechanicalMetrics]) -> Dict:
         """Analyze entire video sequence for comprehensive assessment"""
@@ -423,3 +531,183 @@ class SquatFormGrader:
             self.fault_definitions[fault_type].correction_cue 
             for fault_type, _ in sorted_faults[:3]  # Top 3 priorities
         ]
+    
+    def analyze_attempt_statistics(self, attempt_data: List[Dict]) -> Dict:
+        """
+        Analyze statistics across multiple squat attempts
+        
+        Args:
+            attempt_data: List of attempt dictionaries with completion status and scores
+            
+        Returns:
+            Dict containing comprehensive attempt statistics
+        """
+        if not attempt_data:
+            return {
+                'total_attempts': 0,
+                'successful_reps': 0,
+                'failed_attempts': 0,
+                'success_rate': 0,
+                'average_completion_score': 0,
+                'failure_patterns': {},
+                'improvement_trends': []
+            }
+        
+        total_attempts = len(attempt_data)
+        successful_reps = sum(1 for attempt in attempt_data if attempt.get('is_complete', False))
+        failed_attempts = total_attempts - successful_reps
+        
+        # Calculate success rate
+        success_rate = (successful_reps / total_attempts) * 100 if total_attempts > 0 else 0
+        
+        # Average completion score
+        completion_scores = [attempt.get('completion_score', 0) for attempt in attempt_data]
+        avg_completion = np.mean(completion_scores) if completion_scores else 0
+        
+        # Analyze failure patterns
+        failure_patterns = {}
+        for attempt in attempt_data:
+            if not attempt.get('is_complete', False):
+                for reason in attempt.get('failure_reasons', []):
+                    failure_patterns[reason] = failure_patterns.get(reason, 0) + 1
+        
+        # Calculate failure percentages
+        failure_percentages = {
+            reason: (count / failed_attempts) * 100 
+            for reason, count in failure_patterns.items()
+        } if failed_attempts > 0 else {}
+        
+        # Identify improvement trends (if we have enough data)
+        improvement_trends = []
+        if len(attempt_data) >= 5:
+            # Check if success rate is improving over time
+            first_half = attempt_data[:len(attempt_data)//2]
+            second_half = attempt_data[len(attempt_data)//2:]
+            
+            first_half_success = sum(1 for a in first_half if a.get('is_complete', False)) / len(first_half)
+            second_half_success = sum(1 for a in second_half if a.get('is_complete', False)) / len(second_half)
+            
+            if second_half_success > first_half_success:
+                improvement_trends.append("Success rate improving over session")
+            elif second_half_success < first_half_success:
+                improvement_trends.append("Success rate declining - fatigue or form breakdown")
+            
+            # Check completion score trends
+            first_half_scores = [a.get('completion_score', 0) for a in first_half]
+            second_half_scores = [a.get('completion_score', 0) for a in second_half]
+            
+            if np.mean(second_half_scores) > np.mean(first_half_scores):
+                improvement_trends.append("Form quality improving throughout session")
+        
+        return {
+            'total_attempts': total_attempts,
+            'successful_reps': successful_reps,
+            'failed_attempts': failed_attempts,
+            'success_rate': round(success_rate, 1),
+            'average_completion_score': round(avg_completion, 1),
+            'failure_patterns': failure_percentages,
+            'improvement_trends': improvement_trends,
+            'completion_scores': completion_scores,
+            'most_common_failure': max(failure_patterns, key=failure_patterns.get) if failure_patterns else None
+        }
+
+    def generate_session_summary(self, attempt_statistics: Dict, overall_metrics: Dict) -> Dict:
+        """
+        Generate a comprehensive session summary with actionable insights
+        
+        Args:
+            attempt_statistics: Output from analyze_attempt_statistics
+            overall_metrics: Overall session performance metrics
+            
+        Returns:
+            Dict containing session summary and recommendations
+        """
+        summary = {
+            'session_grade': self._calculate_session_grade(attempt_statistics, overall_metrics),
+            'key_achievements': [],
+            'primary_focus_areas': [],
+            'specific_recommendations': [],
+            'next_session_goals': []
+        }
+        
+        # Identify achievements
+        if attempt_statistics['success_rate'] >= 80:
+            summary['key_achievements'].append("Excellent rep completion rate")
+        elif attempt_statistics['success_rate'] >= 60:
+            summary['key_achievements'].append("Good consistency in movement completion")
+        
+        if attempt_statistics['average_completion_score'] >= 75:
+            summary['key_achievements'].append("Strong form quality maintained")
+        
+        if 'Form quality improving throughout session' in attempt_statistics['improvement_trends']:
+            summary['key_achievements'].append("Progressive improvement during session")
+        
+        # Identify focus areas based on failure patterns
+        failure_patterns = attempt_statistics['failure_patterns']
+        
+        if failure_patterns.get('INSUFFICIENT_DEPTH', 0) > 30:
+            summary['primary_focus_areas'].append("Depth Achievement")
+            summary['specific_recommendations'].extend([
+                "Work on ankle and hip mobility daily",
+                "Practice goblet squats for depth training",
+                "Consider heel elevation during training"
+            ])
+        
+        if failure_patterns.get('BACK_ROUNDING', 0) > 20:
+            summary['primary_focus_areas'].append("Spinal Safety")
+            summary['specific_recommendations'].extend([
+                "Reduce load until form improves",
+                "Focus on thoracic spine mobility",
+                "Strengthen posterior chain muscles"
+            ])
+        
+        if failure_patterns.get('SEVERE_KNEE_VALGUS', 0) > 15:
+            summary['primary_focus_areas'].append("Knee Tracking")
+            summary['specific_recommendations'].extend([
+                "Strengthen hip abductors and glutes",
+                "Practice bodyweight squats with resistance band",
+                "Work on lateral movement patterns"
+            ])
+        
+        # Set next session goals
+        if attempt_statistics['success_rate'] < 70:
+            summary['next_session_goals'].append("Increase rep completion rate to 70%+")
+        
+        if attempt_statistics['average_completion_score'] < 70:
+            summary['next_session_goals'].append("Improve average form score to 70+")
+        
+        if not summary['next_session_goals']:
+            summary['next_session_goals'].append("Maintain current quality while adding volume")
+        
+        return summary
+
+    def _calculate_session_grade(self, attempt_stats: Dict, overall_metrics: Dict) -> str:
+        """Calculate overall session grade based on multiple factors"""
+        grade_points = 0
+        
+        # Success rate contribution (40%)
+        success_rate = attempt_stats['success_rate']
+        if success_rate >= 90:
+            grade_points += 40
+        elif success_rate >= 80:
+            grade_points += 35
+        elif success_rate >= 70:
+            grade_points += 30
+        elif success_rate >= 60:
+            grade_points += 25
+        else:
+            grade_points += success_rate * 0.4
+        
+        # Form quality contribution (40%)
+        avg_completion = attempt_stats['average_completion_score']
+        grade_points += avg_completion * 0.4
+        
+        # Improvement trend bonus (20%)
+        if 'improving' in str(attempt_stats['improvement_trends']):
+            grade_points += 20
+        elif 'declining' in str(attempt_stats['improvement_trends']):
+            grade_points += 10
+        else:
+            grade_points += 15
+        
+        return self._score_to_grade(int(grade_points))

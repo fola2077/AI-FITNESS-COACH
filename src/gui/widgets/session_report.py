@@ -292,13 +292,15 @@ class SessionReportDialog(QDialog):
         
     def analyze_faults(self):
         """Analyze common faults and create visual representation"""
-        faults_data = self.session_data.get('fault_frequency', {})
+        # USE THE NEW PER-REP DATA
+        faults_data = self.session_data.get('faulty_reps', {})
+        total_reps = self.session_data.get('total_reps', 0)
         
         # Clear existing widgets
         for i in reversed(range(self.faults_layout.count())): 
             self.faults_layout.itemAt(i).widget().setParent(None)
         
-        if not faults_data:
+        if not faults_data or total_reps == 0:
             no_faults_label = QLabel("No significant form issues detected! 🎉")
             no_faults_label.setAlignment(Qt.AlignCenter)
             self.faults_layout.addWidget(no_faults_label)
@@ -323,9 +325,11 @@ class SessionReportDialog(QDialog):
                 fault_label.setMinimumWidth(200)
                 
                 fault_bar = QProgressBar()
-                fault_bar.setMaximum(max(faults_data.values()))
+                # Set the max value to the total number of reps
+                fault_bar.setMaximum(total_reps)
                 fault_bar.setValue(count)
-                fault_bar.setFormat(f"{count} occurrences")
+                # UPDATE THE DISPLAY TEXT
+                fault_bar.setFormat(f"{count} of {total_reps} reps")
                 
                 fault_layout.addWidget(fault_label)
                 fault_layout.addWidget(fault_bar)
@@ -539,9 +543,12 @@ class SessionManager:
             'total_reps': 0,
             'form_scores': [],
             'feedback_history': [],
-            'fault_frequency': {},
+            'fault_frequency': {},  # Per-frame count (for detailed analysis)
             'phase_transitions': [],
-            'phase_durations': {}  # Track time spent in each phase
+            'phase_durations': {},  # Track time spent in each phase
+            # --- NEW: Per-rep fault tracking ---
+            'current_rep_faults': set(),  # Tracks unique faults in the current rep
+            'faulty_reps': {}  # Tracks which reps had which faults
         }
         
     def start_session(self):
@@ -554,7 +561,28 @@ class SessionManager:
         
     def update_session(self, rep_count, form_score, phase, feedback_history, fault_data=None):
         """Update session with current data"""
+        
+        # --- NEW: LOGIC FOR PER-REP FAULT TRACKING ---
+        # If a new rep has started, log the faults from the *previous* rep and reset
+        if rep_count > self.session_data['total_reps']:
+            # Log the faults from the completed rep
+            if self.session_data['current_rep_faults']:
+                for fault in self.session_data['current_rep_faults']:
+                    if fault not in self.session_data['faulty_reps']:
+                        self.session_data['faulty_reps'][fault] = 0
+                    self.session_data['faulty_reps'][fault] += 1
+            
+            # Reset the fault tracker for the new rep
+            self.session_data['current_rep_faults'] = set()
+        
+        # Now, update the total reps
         self.session_data['total_reps'] = rep_count
+        
+        # Add any new faults from the current frame to the set for this rep
+        if fault_data:
+            for fault in fault_data:
+                self.session_data['current_rep_faults'].add(fault)
+        # --- END OF NEW LOGIC ---
         
         # Track phase durations
         if phase:
@@ -582,7 +610,7 @@ class SessionManager:
                 if not is_duplicate:
                     self.session_data['feedback_history'].append(feedback)
         
-        # Update fault frequency
+        # Update per-frame fault frequency (keep for detailed analysis)
         if fault_data:
             for fault in fault_data:
                 self.session_data['fault_frequency'][fault] = \
