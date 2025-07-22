@@ -100,6 +100,31 @@ class ConfigManager:
         config["ui_settings"].update(settings)
         return self.save_config(config)
     
+    def save_ui_settings(self, ui_settings):
+        """Save UI settings to config file."""
+        try:
+            # Convert QByteArray objects to base64 strings for JSON serialization
+            serializable_settings = {}
+            for key, value in ui_settings.items():
+                if hasattr(value, 'data'):  # QByteArray
+                    import base64
+                    serializable_settings[key] = base64.b64encode(value.data()).decode('utf-8')
+                elif value is not None:
+                    serializable_settings[key] = str(value)
+                else:
+                    serializable_settings[key] = None
+            
+            # Save to config
+            config = self.load_config()
+            if 'ui' not in config:
+                config['ui'] = {}
+            config['ui'].update(serializable_settings)
+            return self.save_config(config)
+            
+        except Exception as e:
+            print(f"Warning: Could not save UI settings: {e}")
+            return False
+    
     def reset_to_defaults(self):
         """Reset configuration to defaults"""
         return self.save_config(self.default_config.copy())

@@ -559,8 +559,23 @@ class SessionManager:
         """End the current session"""
         self.session_data['end_time'] = time.time()
         
-    def update_session(self, rep_count, form_score, phase, feedback_history, fault_data=None):
-        """Update session with current data"""
+    def update_session(self, rep_count=None, form_score=None, phase=None, feedback_history=None, fault_data=None, **kwargs):
+        """Update session with current data - accepts keyword arguments for flexibility"""
+        
+        # Handle keyword arguments for backward compatibility
+        if 'biomechanical_metrics' in kwargs:
+            self.session_data['biomechanical_metrics'] = kwargs['biomechanical_metrics']
+        if 'angles' in kwargs:
+            self.session_data['angles'] = kwargs['angles']
+        if 'fps' in kwargs:
+            self.session_data['fps'] = kwargs['fps']
+        
+        # Handle None values gracefully
+        rep_count = rep_count or self.session_data.get('total_reps', 0)
+        form_score = form_score if form_score is not None else 100
+        phase = phase or 'STANDING'
+        feedback_history = feedback_history or []
+        fault_data = fault_data or []
         
         # --- NEW: LOGIC FOR PER-REP FAULT TRACKING ---
         # If a new rep has started, log the faults from the *previous* rep and reset
@@ -636,3 +651,7 @@ class SessionManager:
             'avg_form_score': avg_form_score,
             'best_form_score': best_form_score
         }
+
+    def get_session_data(self):
+        """Get complete session data for export"""
+        return self.get_session_summary()
