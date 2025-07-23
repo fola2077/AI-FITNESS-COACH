@@ -583,410 +583,167 @@ class IntelligentFormGrader:
             print(f"Error creating biomechanical metrics: {e}")
             return BiomechanicalMetrics()
     
-    def grade_repetition(self, rep_data: RepetitionData) -> Dict[str, Any]:
+    def grade_repetition(self, rep_data: list) -> dict:
         """
-        Provide comprehensive grading for a complete repetition.
-        
-        This is the main grading function that combines all analysis
-        components to produce a detailed assessment.
-        
+        Analyzes a list of frame data for a full repetition.
+
         Args:
-            rep_data: Complete repetition data
-            
+            rep_data: A list of metric dictionaries, one for each frame of the rep.
+
         Returns:
-            Comprehensive grading results including score, faults, and feedback
+            A dictionary containing the overall score, faults, and other analysis.
         """
-        # Start with perfect score
-        base_score = 100.0
-        faults_detected = []
-        positive_aspects = []
+        if not rep_data:
+            return {'score': 0, 'faults': [], 'summary': "No data for analysis."}
+
+        overall_faults = set()
+        min_angles = {}
+        max_angles = {}
+        
+        # Initialize angle tracking
+        if rep_data and 'angles' in rep_data[0]:
+            angle_keys = rep_data[0]['angles'].keys()
+            min_angles = {key: 360 for key in angle_keys}
+            max_angles = {key: 0 for key in angle_keys}
+        
+        # Aggregate data across the entire repetition
+        for frame_metrics in rep_data:
+            angles = frame_metrics.get('angles', {})
+            for angle_name, value in angles.items():
+                if value < min_angles.get(angle_name, 360):
+                    min_angles[angle_name] = value
+                if value > max_angles.get(angle_name, 0):
+                    max_angles[angle_name] = value
+
+        # Comprehensive fault analysis
+        self._analyze_depth_faults(min_angles, overall_faults)
+        self._analyze_symmetry_faults(rep_data, overall_faults)
+        self._analyze_stability_faults(rep_data, overall_faults)
+        self._analyze_form_faults(rep_data, overall_faults)
+
+        # Calculate final score
+        final_score = self._calculate_rep_score(overall_faults)
+        
+        return {
+            'score': final_score,
+            'faults': list(overall_faults),
+            'summary': f"Rep analysis complete. Score: {final_score}%",
+            'min_angles': min_angles,
+            'max_angles': max_angles,
+            'confidence': self._calculate_confidence_from_data(rep_data),
+            'recommendations': self._get_recommendations(overall_faults)
+        }
+    
+    def _analyze_depth_faults(self, min_angles: dict, faults: set):
+        """Analyze depth-related faults"""
+        knee_angle = min_angles.get('knee', min_angles.get('left_knee', 180))
+        if knee_angle > 100:  # Insufficient depth threshold
+            faults.add("INSUFFICIENT_DEPTH")
+    
+    def _analyze_symmetry_faults(self, rep_data: list, faults: set):
+        """Analyze symmetry-related faults"""
+        if not rep_data:
+            return
+            
+        # Check for asymmetric movement patterns
+        left_knee_angles = []
+        right_knee_angles = []
+        
+        for frame in rep_data:
+            angles = frame.get('angles', {})
+            if 'left_knee' in angles and 'right_knee' in angles:
+                left_knee_angles.append(angles['left_knee'])
+                right_knee_angles.append(angles['right_knee'])
+        
+        if left_knee_angles and right_knee_angles:
+            avg_diff = sum(abs(l - r) for l, r in zip(left_knee_angles, right_knee_angles)) / len(left_knee_angles)
+            if avg_diff > 15:  # More than 15 degrees average difference
+                faults.add("ASYMMETRIC_MOVEMENT")
+    
+    def _analyze_stability_faults(self, rep_data: list, faults: set):
+        """Analyze stability-related faults"""
+        # Check for excessive movement or instability
+        if len(rep_data) < 5:
+            return
+            
+        # Simple stability check based on center of mass movement
+        com_positions = []
+        for frame in rep_data:
+            if 'center_of_mass' in frame:
+                com_positions.append(frame['center_of_mass'])
+        
+        if len(com_positions) > 5:
+            x_variance = np.var([pos[0] for pos in com_positions])
+            if x_variance > 0.01:  # Threshold for excessive lateral movement
+                faults.add("LATERAL_INSTABILITY")
+    
+    def _analyze_form_faults(self, rep_data: list, faults: set):
+        """Analyze general form faults"""
+        # Check for common form issues
+        back_angles = []
+        for frame in rep_data:
+            angles = frame.get('angles', {})
+            if 'back' in angles:
+                back_angles.append(angles['back'])
+        
+        if back_angles:
+            max_back_angle = max(back_angles)
+            if max_back_angle > 30:  # Excessive forward lean
+                faults.add("FORWARD_LEAN")
+            if max_back_angle > 45:  # Back rounding
+                faults.add("BACK_ROUNDING")
+    
+    def _calculate_rep_score(self, faults: set) -> int:
+        """Calculate overall repetition score based on faults"""
+        base_score = 100
+        
+        fault_penalties = {
+            "INSUFFICIENT_DEPTH": 25,
+            "ASYMMETRIC_MOVEMENT": 15,
+            "LATERAL_INSTABILITY": 10,
+            "FORWARD_LEAN": 15,
+            "BACK_ROUNDING": 20,
+            "KNEE_VALGUS": 20,
+            "HEEL_RISE": 10
+        }
+        
+        for fault in faults:
+            penalty = fault_penalties.get(fault, 5)
+            base_score -= penalty
+        
+        return max(0, base_score)
+    
+    def _calculate_confidence_from_data(self, rep_data: list) -> float:
+        """Calculate confidence based on data quality"""
+        if not rep_data:
+            return 0.0
+        
+        # Simple confidence based on data completeness
+        frame_count = len(rep_data)
+        return min(100.0, frame_count * 2)  # Assume 50 frames = 100% confidence
+    
+    def _get_recommendations(self, faults: set) -> list:
+        """Get coaching recommendations based on faults"""
         recommendations = []
-        
-        # 1. Assess basic form metrics
-        form_assessment = self._assess_basic_form(rep_data)
-        base_score -= form_assessment['total_penalty']
-        faults_detected.extend(form_assessment['faults'])
-        
-        # 2. Assess movement quality
-        quality_assessment = self._assess_movement_quality(rep_data)
-        base_score += quality_assessment['bonus_points']  # Can add points for excellent movement
-        positive_aspects.extend(quality_assessment['positive_aspects'])
-        
-        # 3. Check for fatigue indicators
-        fatigue_score, fatigue_recommendations = self.fatigue_predictor.assess_fatigue_risk(rep_data)
-        if fatigue_score > 30:  # Moderate fatigue threshold
-            recommendations.extend(fatigue_recommendations.values())
-        
-        # 4. Contextual adjustments
-        context_adjustments = self._apply_contextual_adjustments(rep_data, base_score)
-        final_score = base_score + context_adjustments['adjustment']
-        
-        # 5. Generate intelligent feedback
-        feedback = self._generate_intelligent_feedback(
-            faults_detected, positive_aspects, recommendations, final_score
-        )
-        
-        # Update history
-        self.recent_scores.append(final_score)
-        for fault in faults_detected:
-            self.fault_frequency[fault['type']] += 1
-        
-        return {
-            'final_score': max(0, min(100, final_score)),
-            'component_scores': {
-                'form': form_assessment['component_scores'],
-                'movement_quality': quality_assessment['scores'],
-                'fatigue_risk': fatigue_score
-            },
-            'faults': faults_detected,
-            'positive_aspects': positive_aspects,
-            'recommendations': recommendations,
-            'feedback': feedback,
-            'confidence': self._calculate_confidence(rep_data)
-        }
-    
-    def _assess_basic_form(self, rep_data: RepetitionData) -> Dict[str, Any]:
-        """
-        Assess basic biomechanical form metrics with graduated penalties.
-        
-        Args:
-            rep_data: Repetition data to analyze
-            
-        Returns:
-            Dictionary containing penalty information and detected faults
-        """
-        total_penalty = 0.0
-        faults = []
-        component_scores = {}
-        
-        if not rep_data.frame_metrics:
-            return {'total_penalty': 0, 'faults': [], 'component_scores': {}}
-        
-        # Find key metrics across the rep
-        min_hip_angle = min(m.hip_angle for m in rep_data.frame_metrics if m.hip_angle > 0)
-        min_back_angle = min(m.back_angle for m in rep_data.frame_metrics if m.back_angle > 0)
-        max_knee_valgus = max(
-            abs(m.knee_angle_left - m.knee_angle_right) 
-            for m in rep_data.frame_metrics
-            if m.knee_angle_left > 0 and m.knee_angle_right > 0
-        )
-        max_forward_lean = max(
-            abs(90 - m.back_angle) for m in rep_data.frame_metrics
-            if m.back_angle > 0 and m.back_angle < 90  # Only forward lean, not backward
-        )
-        
-        # Apply anthropometric normalization
-        normalized_depth_threshold = self.normalizer.normalize_depth_threshold(
-            self.thresholds['depth']['acceptable'], 
-            self.user_profile.torso_to_leg_ratio
-        )
-        
-        normalized_lean_threshold = self.normalizer.normalize_lean_threshold(
-            self.thresholds['forward_lean']['acceptable'],
-            self.user_profile.torso_to_leg_ratio
-        )
-        
-        # 1. Assess Depth with graduated penalty
-        depth_penalty, depth_fault = self._calculate_graduated_penalty(
-            min_hip_angle, 
-            self.thresholds['depth'],
-            'INSUFFICIENT_DEPTH',
-            'depth',
-            lower_is_better=True
-        )
-        total_penalty += depth_penalty
-        if depth_fault:
-            faults.append(depth_fault)
-        component_scores['depth'] = max(0, 100 - depth_penalty)
-        
-        # 2. Assess Back Safety with graduated penalty
-        back_penalty, back_fault = self._calculate_graduated_penalty(
-            min_back_angle,
-            self.thresholds['back_safety'],
-            'BACK_ROUNDING',
-            'back_safety',
-            lower_is_better=False
-        )
-        total_penalty += back_penalty
-        if back_fault:
-            faults.append(back_fault)
-        component_scores['back_safety'] = max(0, 100 - back_penalty)
-        
-        # 3. Assess Knee Valgus with graduated penalty
-        valgus_penalty, valgus_fault = self._calculate_graduated_penalty(
-            max_knee_valgus,
-            self.thresholds['knee_valgus'],
-            'KNEE_VALGUS',
-            'knee_valgus',
-            lower_is_better=True
-        )
-        total_penalty += valgus_penalty
-        if valgus_fault:
-            faults.append(valgus_fault)
-        component_scores['knee_alignment'] = max(0, 100 - valgus_penalty)
-        
-        # 4. Assess Forward Lean with graduated penalty
-        lean_penalty, lean_fault = self._calculate_graduated_penalty(
-            max_forward_lean,
-            self.thresholds['forward_lean'],
-            'FORWARD_LEAN',
-            'forward_lean',
-            lower_is_better=True
-        )
-        total_penalty += lean_penalty
-        if lean_fault:
-            faults.append(lean_fault)
-        component_scores['posture'] = max(0, 100 - lean_penalty)
-        
-        return {
-            'total_penalty': total_penalty,
-            'faults': faults,
-            'component_scores': component_scores
-        }
-    
-    def _calculate_graduated_penalty(
-        self, 
-        measured_value: float, 
-        thresholds: Dict[str, float], 
-        fault_type: str,
-        metric_name: str,
-        lower_is_better: bool = True
-    ) -> Tuple[float, Optional[Dict[str, Any]]]:
-        """
-        Calculate graduated penalty based on severity of deviation.
-        
-        Args:
-            measured_value: The actual measured value
-            thresholds: Dictionary of quality thresholds
-            fault_type: Type of fault for classification
-            metric_name: Name of the metric being assessed
-            lower_is_better: Whether lower values are better (e.g., depth) or worse (e.g., back angle)
-            
-        Returns:
-            Tuple of (penalty_points, fault_dict_or_none)
-        """
-        if measured_value <= 0:  # Invalid measurement
-            return 0.0, None
-            
-        if lower_is_better:
-            if measured_value <= thresholds['excellent']:
-                return 0.0, None
-            elif measured_value <= thresholds['good']:
-                severity = FaultSeverity.MINOR
-                penalty = 2.0
-            elif measured_value <= thresholds['acceptable']:
-                severity = FaultSeverity.MODERATE
-                penalty = 8.0
-            elif measured_value <= thresholds['poor']:
-                severity = FaultSeverity.MAJOR
-                penalty = 20.0
-            else:
-                severity = FaultSeverity.CRITICAL
-                penalty = 35.0
-        else:  # Higher is better (e.g., back angle)
-            if measured_value >= thresholds['excellent']:
-                return 0.0, None
-            elif measured_value >= thresholds['good']:
-                severity = FaultSeverity.MINOR
-                penalty = 2.0
-            elif measured_value >= thresholds['acceptable']:
-                severity = FaultSeverity.MODERATE
-                penalty = 8.0
-            elif measured_value >= thresholds['poor']:
-                severity = FaultSeverity.MAJOR
-                penalty = 20.0
-            else:
-                severity = FaultSeverity.CRITICAL
-                penalty = 35.0
-        
-        # Apply user-level penalty adjustment
-        level_multipliers = {
-            UserLevel.BEGINNER: 0.7,
-            UserLevel.INTERMEDIATE: 1.0,
-            UserLevel.ADVANCED: 1.2,
-            UserLevel.EXPERT: 1.5
+        fault_recommendations = {
+            "INSUFFICIENT_DEPTH": "Focus on going deeper - sit back and down until thighs are parallel to floor",
+            "ASYMMETRIC_MOVEMENT": "Keep movement balanced - check for strength imbalances between sides",
+            "LATERAL_INSTABILITY": "Improve core stability - engage your core throughout the movement",
+            "FORWARD_LEAN": "Keep chest up and back straight - avoid leaning forward excessively",
+            "BACK_ROUNDING": "Maintain neutral spine - avoid rounding your back under load",
+            "KNEE_VALGUS": "Track knees over toes - strengthen glutes and improve hip mobility",
+            "HEEL_RISE": "Keep feet flat on ground throughout the movement"
         }
         
-        adjusted_penalty = penalty * level_multipliers[self.user_profile.skill_level]
+        for fault in faults:
+            if fault in fault_recommendations:
+                recommendations.append(fault_recommendations[fault])
         
-        fault_info = {
-            'type': fault_type,
-            'severity': severity,
-            'measured_value': measured_value,
-            'threshold_exceeded': thresholds['acceptable'],
-            'penalty': adjusted_penalty,
-            'metric': metric_name,
-            'description': self._get_fault_description(fault_type, severity, measured_value)
-        }
+        if not recommendations:
+            recommendations.append("Great form! Keep up the excellent work.")
         
-        return adjusted_penalty, fault_info
-    
-    def _assess_movement_quality(self, rep_data: RepetitionData) -> Dict[str, Any]:
-        """
-        Assess advanced movement quality metrics and award bonus points.
-        
-        Args:
-            rep_data: Repetition data to analyze
-            
-        Returns:
-            Dictionary containing quality scores and positive aspects
-        """
-        bonus_points = 0.0
-        positive_aspects = []
-        scores = {}
-        
-        # Calculate movement quality metrics
-        smoothness = self.movement_analyzer.calculate_movement_smoothness(rep_data.frame_metrics)
-        tempo_consistency = self.movement_analyzer.calculate_tempo_consistency(rep_data.phase_transitions)
-        coordination = self.movement_analyzer.calculate_kinetic_chain_coordination(rep_data.frame_metrics)
-        
-        scores['smoothness'] = smoothness
-        scores['tempo_consistency'] = tempo_consistency
-        scores['coordination'] = coordination
-        
-        # Award bonus points for exceptional movement quality
-        if smoothness > 85:
-            bonus_points += 3
-            positive_aspects.append({
-                'type': 'SMOOTH_MOVEMENT',
-                'description': 'Excellent movement control and smoothness',
-                'score': smoothness
-            })
-        
-        if tempo_consistency > 80:
-            bonus_points += 2
-            positive_aspects.append({
-                'type': 'CONSISTENT_TEMPO',
-                'description': 'Great tempo consistency throughout the movement',
-                'score': tempo_consistency
-            })
-        
-        if coordination > 85:
-            bonus_points += 3
-            positive_aspects.append({
-                'type': 'GOOD_COORDINATION',
-                'description': 'Excellent coordination between body segments',
-                'score': coordination
-            })
-        
-        # Check for exceptional depth (bonus for going deeper than required)
-        if rep_data.frame_metrics:
-            valid_hip_angles = [m.hip_angle for m in rep_data.frame_metrics if m.hip_angle > 0]
-            if valid_hip_angles:
-                min_hip_angle = min(valid_hip_angles)
-                if min_hip_angle < self.thresholds['depth']['excellent']:
-                    bonus_points += 2
-                    positive_aspects.append({
-                        'type': 'EXCELLENT_DEPTH',
-                        'description': f'Outstanding depth achieved: {min_hip_angle:.1f}°',
-                        'score': min_hip_angle
-                    })
-        
-        return {
-            'bonus_points': min(10, bonus_points),  # Cap bonus at 10 points
-            'positive_aspects': positive_aspects,
-            'scores': scores
-        }
-    
-    def _apply_contextual_adjustments(self, rep_data: RepetitionData, current_score: float) -> Dict[str, Any]:
-        """
-        Apply contextual adjustments based on rep number, fatigue, and trends.
-        
-        Args:
-            rep_data: Current repetition data
-            current_score: Score before contextual adjustments
-            
-        Returns:
-            Dictionary containing adjustment information
-        """
-        adjustment = 0.0
-        reasons = []
-        
-        # Early rep bonus (first few reps are often better)
-        if rep_data.rep_number <= 3:
-            adjustment += 1.0
-            reasons.append("Early rep bonus: +1 point")
-        
-        # Consistency bonus
-        if len(self.recent_scores) >= 3:
-            score_variance = np.var(self.recent_scores)
-            if score_variance < 25:  # Low variance indicates consistency
-                adjustment += 2.0
-                reasons.append("Consistency bonus: +2 points")
-        
-        # Improvement trend bonus
-        if len(self.recent_scores) >= 5:
-            recent_trend = np.polyfit(range(len(self.recent_scores)), self.recent_scores, 1)[0]
-            if recent_trend > 1.0:  # Improving trend
-                adjustment += 1.5
-                reasons.append("Improvement trend bonus: +1.5 points")
-        
-        return {
-            'adjustment': adjustment,
-            'reasons': reasons
-        }
-    
-    def _generate_intelligent_feedback(
-        self, 
-        faults: List[Dict], 
-        positive_aspects: List[Dict], 
-        recommendations: List[str],
-        final_score: float
-    ) -> Dict[str, Any]:
-        """
-        Generate intelligent, prioritized feedback for the user.
-        
-        Args:
-            faults: List of detected faults
-            positive_aspects: List of positive movement aspects
-            recommendations: List of recommendations
-            final_score: Final calculated score
-            
-        Returns:
-            Structured feedback dictionary
-        """
-        # Prioritize faults by severity
-        critical_faults = [f for f in faults if f['severity'] == FaultSeverity.CRITICAL]
-        major_faults = [f for f in faults if f['severity'] == FaultSeverity.MAJOR]
-        moderate_faults = [f for f in faults if f['severity'] == FaultSeverity.MODERATE]
-        minor_faults = [f for f in faults if f['severity'] == FaultSeverity.MINOR]
-        
-        # Generate priority feedback (max 2 items to avoid overwhelming user)
-        priority_feedback = []
-        
-        if critical_faults:
-            priority_feedback.extend(critical_faults[:1])  # Show only most critical
-        elif major_faults:
-            priority_feedback.extend(major_faults[:1])
-        elif moderate_faults:
-            priority_feedback.extend(moderate_faults[:2])
-        else:
-            priority_feedback.extend(minor_faults[:2])
-        
-        # Generate motivational message based on score
-        if final_score >= 90:
-            motivation = "Excellent form! Keep up the outstanding work."
-        elif final_score >= 80:
-            motivation = "Great job! Minor refinements will perfect your technique."
-        elif final_score >= 70:
-            motivation = "Good effort! Focus on the key areas highlighted below."
-        elif final_score >= 60:
-            motivation = "Making progress! Address the main issues for safer, more effective squats."
-        else:
-            motivation = "Focus on fundamentals. Consider reducing weight to master the movement pattern."
-        
-        # Generate specific coaching cues based on most frequent faults
-        coaching_cues = self._generate_coaching_cues(faults, positive_aspects)
-        
-        return {
-            'priority_feedback': priority_feedback,
-            'positive_reinforcement': positive_aspects[:2],  # Show top 2 positive aspects
-            'motivation': motivation,
-            'coaching_cues': coaching_cues,
-            'recommendations': recommendations[:3],  # Show top 3 recommendations
-            'overall_assessment': self._generate_overall_assessment(final_score, faults, positive_aspects)
-        }
-    
+        return recommendations[:3]  # Limit to top 3 recommendations
+
     def _generate_coaching_cues(self, faults: List[Dict], positive_aspects: List[Dict]) -> List[str]:
         """
         Generate specific, actionable coaching cues based on detected patterns.

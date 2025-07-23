@@ -2,10 +2,10 @@ import sys
 import cv2
 import time
 from pathlib import Path
-from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
-                               QHBoxLayout, QWidget, QLabel, QFileDialog, QFrame,
-                               QProgressBar, QTextEdit, QSplitter, QGridLayout,
-                               QGroupBox, QMenuBar, QMenu, QMessageBox)
+from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout,
+                             QHBoxLayout, QWidget, QLabel, QFileDialog, QFrame,
+                             QProgressBar, QTextEdit, QSplitter, QGridLayout,
+                             QGroupBox, QMenuBar, QMenu, QMessageBox)
 from PySide6.QtGui import QImage, QPixmap, QFont, QAction
 from PySide6.QtCore import Qt, QTimer
 from src.capture.camera import CameraManager
@@ -21,53 +21,58 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AI Fitness Coach - Squat Form Analyzer")
-        
+
         # Initialize managers using your existing classes
         self.config_manager = ConfigManager()
         self.current_settings = self.config_manager.get_analysis_settings()
-        
+
         ui_settings = self.config_manager.get_ui_settings()
         self.resize(ui_settings.get('window_width', 1600), ui_settings.get('window_height', 1000))
 
         self.camera_manager = None
-        
+
         # Create user profile for advanced form grader
         self.user_profile = UserProfile(
             user_id="main_user",
             skill_level=UserLevel.INTERMEDIATE,  # Could be configurable
             coaching_style="balanced"
         )
-        
+
         # Initialize pose processor with user profile
         self.pose_processor = PoseProcessor(self.user_profile)
         self.feedback_manager = FeedbackManager()
         self.session_manager = SessionManager()
-        
+
         self.timer = QTimer()
         self.is_session_active = False
-        
+
+        # Timer for displaying post-rep analysis
+        self.rep_analysis_timer = QTimer(self)
+        self.rep_analysis_timer.setSingleShot(True)
+        self.rep_analysis_timer.timeout.connect(self.clear_rep_analysis_display)
+
         # Performance monitoring
         self._last_fps_time = time.time()
         self._frame_count = 0
         self._fps = 0
         self.frame_counter = 0  # For reducing debug output
-        
+
         self.setup_ui()
         self.setup_menu_bar()  # Add the missing method
         self.setup_connections()
-        
+
         self.pose_processor.update_settings(self.current_settings)
 
     def setup_ui(self):
         self.setStyleSheet("""
             QMainWindow { background-color: #2e2e2e; }
-            QGroupBox { 
-                color: #e0e0e0; font-weight: bold; border: 1px solid #444; 
+            QGroupBox {
+                color: #e0e0e0; font-weight: bold; border: 1px solid #444;
                 border-radius: 8px; margin-top: 1ex; background-color: #3c3c3c;
             }
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
             QLabel { color: #e0e0e0; font-size: 14px; }
-            QPushButton { 
+            QPushButton {
                 background-color: #0078d4; color: white; border: none;
                 padding: 8px 16px; border-radius: 4px;
             }
@@ -75,19 +80,19 @@ class MainWindow(QMainWindow):
             QPushButton:disabled { background-color: #555; color: #aaa; }
             QTextEdit { background-color: #2e2e2e; color: #e0e0e0; border: 1px solid #444; }
         """)
-        
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
         splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(splitter)
-        
+
         left_panel = self.create_video_panel()
         right_panel = self.create_info_panel()
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
         splitter.setSizes([1100, 500])
-        
+
         # Add status bar for performance monitoring
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("Ready - No active session")
@@ -95,44 +100,44 @@ class MainWindow(QMainWindow):
     def setup_menu_bar(self):
         """Setup the application menu bar"""
         menubar = self.menuBar()
-        
+
         # File Menu
         file_menu = menubar.addMenu('File')
-        
+
         open_video_action = QAction('Open Video...', self)
         open_video_action.setShortcut('Ctrl+O')
         open_video_action.triggered.connect(self.open_video_file)
         file_menu.addAction(open_video_action)
-        
+
         start_webcam_action = QAction('Start Webcam', self)
         start_webcam_action.setShortcut('Ctrl+W')
         start_webcam_action.triggered.connect(self.start_webcam)
         file_menu.addAction(start_webcam_action)
-        
+
         file_menu.addSeparator()
-        
+
         exit_action = QAction('Exit', self)
         exit_action.setShortcut('Ctrl+Q')
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-        
+
         # Settings Menu
         settings_menu = menubar.addMenu('Settings')
-        
+
         preferences_action = QAction('Preferences...', self)
         preferences_action.triggered.connect(self.show_settings_dialog)
         settings_menu.addAction(preferences_action)
-        
+
         # View Menu
         view_menu = menubar.addMenu('View')
-        
+
         show_report_action = QAction('Session Report...', self)
         show_report_action.triggered.connect(self.show_session_report)
         view_menu.addAction(show_report_action)
-        
+
         # Help Menu
         help_menu = menubar.addMenu('Help')
-        
+
         about_action = QAction('About', self)
         about_action.triggered.connect(self.show_about_dialog)
         help_menu.addAction(about_action)
@@ -156,7 +161,7 @@ class MainWindow(QMainWindow):
         self.stop_button = QPushButton("⏹️ Stop Session")
         self.stop_button.setEnabled(False)
         self.stop_button.setStyleSheet("background-color: #d32f2f;")
-        
+
         controls_layout.addWidget(self.webcam_button)
         controls_layout.addWidget(self.video_button)
         controls_layout.addWidget(self.stop_button)
@@ -166,14 +171,14 @@ class MainWindow(QMainWindow):
     def create_info_panel(self):
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        
+
         # Basic stats
         stats_group = QGroupBox("Live Statistics")
         stats_layout = QGridLayout(stats_group)
         self.rep_label = QLabel("0")
         self.form_score_label = QLabel("100%")
         self.phase_label = QLabel("Ready")
-        
+
         stats_layout.addWidget(QLabel("Rep Count:"), 0, 0)
         stats_layout.addWidget(self.rep_label, 0, 1)
         stats_layout.addWidget(QLabel("Form Score:"), 1, 0)
@@ -189,7 +194,7 @@ class MainWindow(QMainWindow):
         self.stability_label = QLabel("0.0")
         self.tempo_label = QLabel("0.0s")
         self.balance_label = QLabel("0.0")
-        
+
         advanced_layout.addWidget(QLabel("Knee Depth:"), 0, 0)
         advanced_layout.addWidget(self.depth_label, 0, 1)
         advanced_layout.addWidget(QLabel("Stability:"), 1, 0)
@@ -207,7 +212,7 @@ class MainWindow(QMainWindow):
         self.feedback_display.setMaximumHeight(120)
         feedback_layout.addWidget(self.feedback_display)
         layout.addWidget(feedback_group)
-        
+
         # Export buttons
         export_group = QGroupBox("Session Export")
         export_layout = QHBoxLayout(export_group)
@@ -218,7 +223,7 @@ class MainWindow(QMainWindow):
         export_layout.addWidget(self.export_csv_button)
         export_layout.addWidget(self.export_json_button)
         layout.addWidget(export_group)
-        
+
         return panel
 
     def export_session_csv(self):
@@ -226,7 +231,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self.session_manager, 'get_session_data'):
             QMessageBox.warning(self, "Export Error", "Session data not available for export.")
             return
-            
+
         try:
             session_data = self.session_manager.get_session_data()
             if not session_data:
@@ -236,7 +241,7 @@ class MainWindow(QMainWindow):
             filename, _ = QFileDialog.getSaveFileName(
                 self, "Save Session Data", f"session_{int(time.time())}.csv", "CSV Files (*.csv)"
             )
-            
+
             if filename:
                 import csv
                 with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
@@ -247,7 +252,7 @@ class MainWindow(QMainWindow):
                     writer.writerow(['Average Form Score', session_data.get('form_score', 100)])
                     writer.writerow(['Session Duration', f"{session_data.get('duration', 0):.1f}s"])
                     writer.writerow([''])  # Empty row
-                    
+
                     # Write biomechanical metrics if available
                     bio_metrics = session_data.get('biomechanical_metrics', {})
                     if bio_metrics:
@@ -257,7 +262,7 @@ class MainWindow(QMainWindow):
                         writer.writerow(['Tempo (seconds)', bio_metrics.get('tempo', 0)])
                         writer.writerow(['Balance Score', bio_metrics.get('balance_score', 0)])
                         writer.writerow([''])
-                    
+
                     # Write feedback history
                     feedback_history = session_data.get('feedback_history', [])
                     if feedback_history:
@@ -271,9 +276,9 @@ class MainWindow(QMainWindow):
                                 feedback.get('message', ''),
                                 feedback.get('category', 'general')
                             ])
-                
+
                 QMessageBox.information(self, "Export Success", f"Session data exported to:\n{filename}")
-                
+
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export CSV: {str(e)}")
 
@@ -282,7 +287,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self.session_manager, 'get_session_data'):
             QMessageBox.warning(self, "Export Error", "Session data not available for export.")
             return
-            
+
         try:
             session_data = self.session_manager.get_session_data()
             if not session_data:
@@ -292,10 +297,10 @@ class MainWindow(QMainWindow):
             filename, _ = QFileDialog.getSaveFileName(
                 self, "Save Session Data", f"session_{int(time.time())}.json", "JSON Files (*.json)"
             )
-            
+
             if filename:
                 import json
-                
+
                 # Prepare comprehensive session export
                 export_data = {
                     'session_info': {
@@ -314,12 +319,12 @@ class MainWindow(QMainWindow):
                         'phase_transitions': session_data.get('phase_transitions', [])
                     }
                 }
-                
+
                 with open(filename, 'w', encoding='utf-8') as jsonfile:
                     json.dump(export_data, jsonfile, indent=2, default=str)
-                
+
                 QMessageBox.information(self, "Export Success", f"Session data exported to:\n{filename}")
-                
+
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export JSON: {str(e)}")
 
@@ -342,20 +347,20 @@ class MainWindow(QMainWindow):
     def open_video_file(self):
         """Open video file dialog"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Select Video File", 
-            "", 
+            self,
+            "Select Video File",
+            "",
             "Video Files (*.mp4 *.avi *.mov *.mkv *.wmv);;All Files (*)"
         )
         if file_path:
             try:
                 self.setup_camera(file_path)
-                
+
                 # Get video info for confirmation
                 if self.camera_manager:
                     video_info = self.camera_manager.get_video_info()
                     print(f"Video loaded: {video_info}")
-                
+
                 self.video_label.setText(f"Video Loaded: {Path(file_path).name}")
                 QMessageBox.information(self, "Video Loaded", f"Video loaded successfully!\nFile: {Path(file_path).name}")
             except Exception as e:
@@ -367,14 +372,14 @@ class MainWindow(QMainWindow):
         try:
             if self.camera_manager:
                 self.camera_manager.release()
-            
+
             self.camera_manager = CameraManager(source)
             if not self.camera_manager.isOpened():
                 raise RuntimeError("Failed to open video source")
-            
+
             # Determine source type
             source_type = 'video' if isinstance(source, str) else 'webcam'
-            
+
             # Reset and start session with proper source type
             self.pose_processor.reset()
             self.pose_processor.start_session(source_type)  # Pass the source type
@@ -386,15 +391,15 @@ class MainWindow(QMainWindow):
             from src.processing.pose_processor import SessionState
             self.pose_processor.session_state = SessionState.ACTIVE
             print("[DEBUG] Forced session state to ACTIVE after camera setup.")
-            
+
             # Update UI
             self.webcam_button.setEnabled(False)
             self.video_button.setEnabled(False)
             self.stop_button.setEnabled(True)
-            
+
             # Start frame updates
             self.timer.start(33)  # ~30 FPS
-            
+
         except Exception as e:
             raise e
 
@@ -402,186 +407,134 @@ class MainWindow(QMainWindow):
         """Stop current session"""
         if self.timer.isActive():
             self.timer.stop()
-        
+
         if self.camera_manager:
             self.camera_manager.release()
             self.camera_manager = None
-        
+
         self.session_manager.end_session()
         self.is_session_active = False
-        
+
         # Reset UI
         self.webcam_button.setEnabled(True)
         self.video_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.video_label.setText("Session stopped\n\nClick 'Start Webcam' or 'Load Video' to begin new session")
-        
+
         # Show session report if there were reps
         if self.session_manager.session_data.get('total_reps', 0) > 0:
             self.show_session_report()
 
     def update_frame(self):
-        """Update frame with pose analysis and performance monitoring"""
-        if not self.camera_manager or not self.is_session_active:
+        """Update frame with pose analysis and handle new data flow."""
+        if not self.is_session_active:
             return
 
         frame = self.camera_manager.get_frame()
         if frame is None:
             self.stop_session()
-            self.video_label.setText("Video Finished. Session ended.")
-            self.show_session_report()
             return
 
         try:
-            # Performance monitoring
-            current_time = time.time()
-            self._frame_count += 1
-            self.frame_counter += 1
-            
-            if current_time - self._last_fps_time >= 1.0:  # Update FPS every second
-                self._fps = self._frame_count / (current_time - self._last_fps_time)
-                self._frame_count = 0
-                self._last_fps_time = current_time
-                
-                # Update status bar with FPS
-                self.status_bar.showMessage(f"Active Session - FPS: {self._fps:.1f}")
+            # Process frame - returns lightweight, real-time data
+            live_results = self.pose_processor.process_frame(frame)
 
-            # Downscale frame for processing if it's high resolution (improves performance)
-            original_frame = frame.copy()
-            if frame.shape[0] > 480:  # If height > 480, downscale
-                scale_factor = 480 / frame.shape[0]
-                new_width = int(frame.shape[1] * scale_factor)
-                process_frame = cv2.resize(frame, (new_width, 480))
-            else:
-                process_frame = frame
-                scale_factor = 1.0
+            if live_results:
+                # Display the processed frame with skeleton
+                self.display_frame(live_results.get('processed_frame', frame))
 
-            # Process frame - the enhanced processor returns a dictionary
-            result = self.pose_processor.process_frame(process_frame)
+                # Update the live UI elements (rep count, phase)
+                self.update_ui(live_results)
 
-            # Handle the new dictionary format from enhanced PoseProcessor
-            if isinstance(result, dict):
-                metrics = result
-                faults = result.get('faults', [])
-                # Use original frame for display if downscaled
-                display_frame = original_frame
-                if hasattr(self.pose_processor, 'draw_overlays_improved'):
-                    processed_frame = self.pose_processor.draw_overlays_improved(display_frame, metrics, faults)
-                else:
-                    processed_frame = display_frame
-            elif isinstance(result, tuple) and len(result) >= 3:
-                processed_frame, metrics, faults = result
-            elif isinstance(result, tuple) and len(result) == 2:
-                processed_frame, pose_results = result
-                # Extract metrics from pose processor
-                metrics = {
-                    'reps': getattr(self.pose_processor, 'rep_counter', 0),
-                    'phase': getattr(self.pose_processor, 'phase', 'STANDING'),
-                    'form_score': getattr(self.pose_processor, 'form_score', 100)
-                }
-                faults = getattr(self.pose_processor, 'current_faults', [])
-            else:
-                processed_frame = result if result is not None else original_frame
-                metrics = {'reps': 0, 'phase': 'STANDING', 'form_score': 100}
-                faults = []
-
-            # Update UI every 3 frames instead of every frame (improves performance)
-            if self.frame_counter % 3 == 0:
-                self.update_ui(metrics, faults)
-            
-            self.display_frame(processed_frame)
-            
-            # Reduced debug output - only print occasionally
-            if self.frame_counter % 120 == 0:  # Every 4 seconds at 30 FPS
-                print(f"🎯 Rep: {metrics.get('reps', 0)}, Phase: {metrics.get('phase', 'N/A')}, Score: {metrics.get('form_score', 100)}%, FPS: {self._fps:.1f}")
+                # Check if a new rep analysis is available
+                if live_results.get('last_rep_analysis'):
+                    self.display_rep_analysis(live_results['last_rep_analysis'])
 
         except Exception as e:
             print(f"Frame processing error: {e}")
-            self.display_frame(original_frame if 'original_frame' in locals() else frame)
+            self.display_frame(frame) # Display raw frame on error
 
-    def update_ui(self, metrics, faults):
-        """Update UI elements with current metrics and log session data"""
-        self.rep_label.setText(str(metrics.get('reps', 0)))
-        self.phase_label.setText(metrics.get('phase', 'N/A'))
-        score = metrics.get('form_score', 100)
+    def update_ui(self, live_metrics: dict):
+        """
+        Updates the UI with live, real-time data. Robust error handling and fallback for missing metrics.
+        """
+        try:
+            self.rep_label.setText(str(live_metrics.get('rep_count', 0)))
+            self.phase_label.setText(live_metrics.get('phase', '...'))
+
+            # Update advanced metrics if available in live data
+            angles = live_metrics.get('angles', {})
+            knee_angle = angles.get('knee', angles.get('left_knee', 0))
+            if isinstance(knee_angle, (int, float)) and knee_angle > 0:
+                self.depth_label.setText(f"{knee_angle:.0f}°")
+            else:
+                self.depth_label.setText("-")
+
+            # Advanced metrics: stability, tempo, balance
+            stability = live_metrics.get('stability', None)
+            if stability is not None:
+                self.stability_label.setText(f"{stability:.3f}")
+            else:
+                self.stability_label.setText("0.0")
+
+            tempo = live_metrics.get('tempo', None)
+            if tempo is not None:
+                self.tempo_label.setText(f"{tempo:.2f}s")
+            else:
+                self.tempo_label.setText("0.0s")
+
+            balance = live_metrics.get('balance', None)
+            if balance is not None:
+                self.balance_label.setText(f"{balance:.3f}")
+            else:
+                self.balance_label.setText("0.0")
+
+            # Update form score from current metrics
+            current_score = live_metrics.get('form_score', None)
+            if isinstance(current_score, (int, float)) and current_score != 100:
+                self.form_score_label.setText(f"{current_score}%")
+            else:
+                self.form_score_label.setText("-")
+
+            # Update FPS display in status bar
+            fps = live_metrics.get('fps', 0)
+            session_state = live_metrics.get('session_state', 'UNKNOWN')
+            landmarks_detected = live_metrics.get('landmarks_detected', False)
+            status_msg = f"FPS: {fps:.0f} | State: {session_state} | Pose: {'✅' if landmarks_detected else '❌'}"
+            self.status_bar.showMessage(status_msg)
+        except Exception as e:
+            print(f"UI update error: {e}")
+            self.status_bar.showMessage("UI update error. Check logs.")
+
+    def display_rep_analysis(self, analysis: dict):
+        """Displays the detailed analysis of the last completed rep."""
+        if not analysis:
+            return
+
+        score = analysis.get('score', 0)
+        faults = analysis.get('faults', [])
+
+        # Update the main form score label with the result of the last rep
         self.form_score_label.setText(f"{score}%")
 
-        # Color code the score
-        if score >= 90:
-            color = "#4CAF50"  # Green
-        elif score >= 70:
-            color = "#FFC107"  # Amber
+        # Format the feedback text
+        feedback_text = f"Rep Score: {score}%\n\nDetected Issues:\n"
+        if faults:
+            for fault in faults:
+                feedback_text += f"• {fault.replace('_', ' ').title()}\n"
         else:
-            color = "#F44336"  # Red
-        self.form_score_label.setStyleSheet(f"color: {color}; font-size: 18px; font-weight: bold;")
+            feedback_text += "• None - Great form!\n"
 
-        # Update advanced metrics from biomechanical data
-        bio_metrics = metrics.get('biomechanical_metrics', {})
-        if bio_metrics:
-            self.depth_label.setText(f"{bio_metrics.get('knee_depth', 0):.1f}°")
-            self.stability_label.setText(f"{bio_metrics.get('stability_score', 0):.2f}")
-            self.tempo_label.setText(f"{bio_metrics.get('tempo', 0):.1f}s")
-            self.balance_label.setText(f"{bio_metrics.get('balance_score', 0):.2f}")
-        else:
-            # Fallback to individual angle data if available
-            angles = metrics.get('angles', {})
-            if angles:
-                knee_angle = angles.get('knee_left', angles.get('knee_right', 180))
-                depth = 180 - knee_angle if knee_angle < 180 else 0
-                self.depth_label.setText(f"{depth:.1f}°")
+        self.feedback_display.setPlainText(feedback_text)
 
-        # Process feedback using your existing feedback manager
-        if hasattr(self.feedback_manager, 'process_pose_analysis'):
-            self.feedback_manager.process_pose_analysis(
-                faults,
-                metrics,
-                metrics.get('phase', 'STANDING'),
-                metrics.get('reps', 0)
-            )
-            feedback_messages = self.feedback_manager.get_current_feedback()
-            self.feedback_display.setPlainText("\n".join([f.message for f in feedback_messages]))
-        else:
-            # Fallback if feedback manager doesn't have the method
-            if faults:
-                feedback_text = "Form issues detected:\n" + "\n".join([f"• {fault.replace('_', ' ').title()}" for fault in faults])
-            else:
-                feedback_text = "Good form! Keep it up!"
-            feedback_messages = []  # fallback, no feedback objects
-            self.feedback_display.setPlainText(feedback_text)
+        # Show the feedback for 5 seconds
+        self.rep_analysis_timer.start(5000)
 
-        # --- SESSION LOGGING ---
-        # Convert feedback messages to dicts for session logging
-        feedback_history = []
-        if hasattr(self.feedback_manager, 'process_pose_analysis'):
-            # Use the feedback messages we already got
-            for f in feedback_messages:
-                feedback_history.append({
-                    'timestamp': getattr(f, 'timestamp', time.time()),
-                    'message': getattr(f, 'message', str(f)),
-                    'category': getattr(f, 'category', 'general')
-                })
-        else:
-            # Create feedback entry for fallback case
-            if faults:
-                feedback_history.append({
-                    'timestamp': time.time(),
-                    'message': f"Form issues: {', '.join(faults)}",
-                    'category': 'form'
-                })
-
-        # Log session data in real time with advanced metrics
-        session_data = {
-            'rep_count': metrics.get('reps', 0),
-            'form_score': metrics.get('form_score', 100),
-            'phase': metrics.get('phase', 'STANDING'),
-            'feedback_history': feedback_history,
-            'fault_data': faults,
-            'biomechanical_metrics': bio_metrics,
-            'angles': metrics.get('angles', {}),
-            'fps': metrics.get('fps', 0)
-        }
-        
-        self.session_manager.update_session(**session_data)
+    def clear_rep_analysis_display(self):
+        """Clears the post-rep analysis from the feedback box."""
+        self.feedback_display.setPlainText("Complete another rep for analysis.")
+        # Optionally, reset the score display to a neutral state
+        # self.form_score_label.setText("N/A")
 
     def display_frame(self, frame):
         """Display frame in video label"""
@@ -591,15 +544,15 @@ class MainWindow(QMainWindow):
                 height, width, channel = frame.shape
                 bytes_per_line = 3 * width
                 q_image = QImage(frame.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
-                
+
                 # Scale to fit label while maintaining aspect ratio
                 pixmap = QPixmap.fromImage(q_image)
                 scaled_pixmap = pixmap.scaled(
-                    self.video_label.size(), 
-                    Qt.KeepAspectRatio, 
+                    self.video_label.size(),
+                    Qt.KeepAspectRatio,
                     Qt.SmoothTransformation
                 )
-                
+
                 self.video_label.setPixmap(scaled_pixmap)
         except Exception as e:
             print(f"Display error: {e}")
@@ -629,10 +582,10 @@ class MainWindow(QMainWindow):
 
     def show_about_dialog(self):
         """Show about dialog"""
-        QMessageBox.about(self, "About AI Fitness Coach", 
-                         "AI Fitness Coach v1.0\n\n"
-                         "Real-time squat form analysis using computer vision.\n"
-                         "Built with MediaPipe and PySide6.")
+        QMessageBox.about(self, "About AI Fitness Coach",
+                        "AI Fitness Coach v1.0\n\n"
+                        "Real-time squat form analysis using computer vision.\n"
+                        "Built with MediaPipe and PySide6.")
 
     def closeEvent(self, event):
         """Handle application close event."""
@@ -640,14 +593,19 @@ class MainWindow(QMainWindow):
             # Stop session if active
             if self.is_session_active:
                 self.stop_session()
-            
+
             # Stop camera and processing
-            if hasattr(self, 'camera_manager'):
-                self.camera_manager.release()
-            
+            if hasattr(self, 'camera_manager') and self.camera_manager is not None:
+                try:
+                    self.camera_manager.release()
+                except AttributeError:
+                    # Handle case where camera_manager doesn't have release method
+                    if hasattr(self.camera_manager, 'cap') and self.camera_manager.cap is not None:
+                        self.camera_manager.cap.release()
+
             if hasattr(self, 'timer'):
                 self.timer.stop()
-            
+
             # Save UI settings if the method exists
             if hasattr(self.config_manager, 'save_ui_settings'):
                 ui_settings = {
@@ -658,12 +616,18 @@ class MainWindow(QMainWindow):
                     'splitter_state': getattr(self, 'splitter', None) and self.splitter.saveState()
                 }
                 self.config_manager.save_ui_settings(ui_settings)
-            
+
             # End session if active
             if hasattr(self, 'pose_processor') and self.pose_processor:
                 self.pose_processor.end_session()
-                
+
         except Exception as e:
             print(f"Warning: Error during cleanup: {e}")
-        
+
         event.accept()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())

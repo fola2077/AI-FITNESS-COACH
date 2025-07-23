@@ -140,7 +140,7 @@ class PoseDetector:
         except:
             return 0.0
     
-    def calculate_joint_angles(self, landmarks):
+    def calculate_angles(self, landmarks):
         """
         Calculate all relevant joint angles for squat analysis.
         
@@ -256,3 +256,107 @@ class PoseDetector:
             
         except:
             return 0.0
+
+    def get_landmarks(self):
+        """Get current pose landmarks."""
+        if self.results and self.results.pose_landmarks:
+            return self.results.pose_landmarks.landmark
+        return None
+
+    def get_all_metrics(self, landmarks, frame_shape):
+        """
+        Calculate comprehensive metrics from pose landmarks.
+        
+        Args:
+            landmarks: MediaPipe pose landmarks
+            frame_shape: Shape of the frame (height, width, channels)
+            
+        Returns:
+            dict: Dictionary containing angles, distances, and other metrics
+        """
+        if not landmarks:
+            return {
+                'angles': {},
+                'distances': {},
+                'positions': {},
+                'frame_info': {
+                    'height': frame_shape[0] if len(frame_shape) > 0 else 0,
+                    'width': frame_shape[1] if len(frame_shape) > 1 else 0
+                }
+            }
+        
+        # Calculate joint angles using existing method
+        angles = self.calculate_angles(landmarks)
+        
+        # Calculate key distances and positions
+        positions = {}
+        distances = {}
+        
+        try:
+            # Key landmark positions (normalized coordinates)
+            key_landmarks = {
+                'nose': landmarks[0],
+                'left_shoulder': landmarks[11],
+                'right_shoulder': landmarks[12],
+                'left_hip': landmarks[23],
+                'right_hip': landmarks[24],
+                'left_knee': landmarks[25],
+                'right_knee': landmarks[26],
+                'left_ankle': landmarks[27],
+                'right_ankle': landmarks[28]
+            }
+            
+            # Store positions
+            for name, landmark in key_landmarks.items():
+                positions[name] = {
+                    'x': landmark.x,
+                    'y': landmark.y,
+                    'z': landmark.z,
+                    'visibility': landmark.visibility
+                }
+            
+            # Calculate key distances
+            distances['shoulder_width'] = self._calculate_distance(
+                key_landmarks['left_shoulder'], key_landmarks['right_shoulder']
+            )
+            distances['hip_width'] = self._calculate_distance(
+                key_landmarks['left_hip'], key_landmarks['right_hip']
+            )
+            distances['torso_length'] = self._calculate_distance(
+                key_landmarks['left_shoulder'], key_landmarks['left_hip']
+            )
+            
+            # Calculate center of mass
+            center_of_mass = self.calculate_center_of_mass(landmarks)
+            positions['center_of_mass'] = {
+                'x': center_of_mass[0],
+                'y': center_of_mass[1],
+                'z': 0.0,
+                'visibility': 1.0
+            }
+            
+            # Calculate landmark visibility
+            visibility_score = self.calculate_landmark_visibility(landmarks)
+            
+        except (IndexError, KeyError) as e:
+            if self.debug_mode:
+                print(f"Warning: Could not calculate some metrics: {e}")
+        
+        return {
+            'angles': angles,
+            'distances': distances,
+            'positions': positions,
+            'visibility': visibility_score,
+            'frame_info': {
+                'height': frame_shape[0] if len(frame_shape) > 0 else 0,
+                'width': frame_shape[1] if len(frame_shape) > 1 else 0
+            }
+        }
+    
+    def _calculate_distance(self, point1, point2):
+        """Calculate Euclidean distance between two landmarks."""
+        return math.sqrt(
+            (point1.x - point2.x) ** 2 + 
+            (point1.y - point2.y) ** 2 + 
+            (point1.z - point2.z) ** 2
+        )

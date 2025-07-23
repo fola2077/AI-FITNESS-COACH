@@ -560,8 +560,8 @@ class SessionManager:
         self.session_data['end_time'] = time.time()
         
     def update_session(self, rep_count=None, form_score=None, phase=None, feedback_history=None, fault_data=None, **kwargs):
-        """Update session with current data - accepts keyword arguments for flexibility"""
-        
+        """Update session with current data - robustly aggregate per-rep metrics and faults"""
+
         # Handle keyword arguments for backward compatibility
         if 'biomechanical_metrics' in kwargs:
             self.session_data['biomechanical_metrics'] = kwargs['biomechanical_metrics']
@@ -569,16 +569,16 @@ class SessionManager:
             self.session_data['angles'] = kwargs['angles']
         if 'fps' in kwargs:
             self.session_data['fps'] = kwargs['fps']
-        
+
         # Handle None values gracefully
         rep_count = rep_count or self.session_data.get('total_reps', 0)
         form_score = form_score if form_score is not None else 100
         phase = phase or 'STANDING'
         feedback_history = feedback_history or []
         fault_data = fault_data or []
-        
-        # --- NEW: LOGIC FOR PER-REP FAULT TRACKING ---
-        # If a new rep has started, log the faults from the *previous* rep and reset
+
+        # --- Robust per-rep aggregation ---
+        # If a new rep has started, log the faults and score from the completed rep and reset
         if rep_count > self.session_data['total_reps']:
             # Log the faults from the completed rep
             if self.session_data['current_rep_faults']:
@@ -586,30 +586,24 @@ class SessionManager:
                     if fault not in self.session_data['faulty_reps']:
                         self.session_data['faulty_reps'][fault] = 0
                     self.session_data['faulty_reps'][fault] += 1
-            
             # Reset the fault tracker for the new rep
             self.session_data['current_rep_faults'] = set()
-        
+            # Log the score for the completed rep
+            self.session_data['form_scores'].append(form_score)
+
         # Now, update the total reps
         self.session_data['total_reps'] = rep_count
-        
+
         # Add any new faults from the current frame to the set for this rep
         if fault_data:
             for fault in fault_data:
                 self.session_data['current_rep_faults'].add(fault)
-        # --- END OF NEW LOGIC ---
-        
+
         # Track phase durations
         if phase:
             self.session_data['phase_durations'][phase] = \
                 self.session_data['phase_durations'].get(phase, 0) + 1
-        
-        # NEW, IMPROVED LOGIC: Log scores during actual movement
-        if form_score is not None:
-            # Log the score on every frame where the user is not just standing still
-            if phase not in ["STANDING", "Ready"]:
-                self.session_data['form_scores'].append(form_score)
-            
+
         # Update feedback history - avoid duplicates by checking message and recent timestamp
         if feedback_history:
             for feedback in feedback_history:
@@ -621,10 +615,9 @@ class SessionManager:
                         abs(current_time - existing.get('timestamp', 0)) < 2.0):
                         is_duplicate = True
                         break
-                
                 if not is_duplicate:
                     self.session_data['feedback_history'].append(feedback)
-        
+
         # Update per-frame fault frequency (keep for detailed analysis)
         if fault_data:
             for fault in fault_data:

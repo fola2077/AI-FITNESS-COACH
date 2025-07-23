@@ -10,10 +10,6 @@ class CameraManager:
         self.source = source
         self.is_video_file = isinstance(source, str)
         
-    def __init__(self, source=0):
-        self.source = source
-        self.is_video_file = isinstance(source, str)
-        
         # Additional validation for video files
         if self.is_video_file:
             if not os.path.exists(source):
@@ -67,6 +63,14 @@ class CameraManager:
 
     def release(self):
         """Release the video capture."""
-        if self.cap:
-            self.cap.release()
-            self.cap = None
+        try:
+            if self.cap:
+                self.cap.release()
+                self.cap = None
+                print("🔄 Camera resources released")
+        except Exception as e:
+            print(f"Warning: Error releasing camera: {e}")
+            
+    def __del__(self):
+        """Destructor to ensure resources are cleaned up."""
+        self.release()
