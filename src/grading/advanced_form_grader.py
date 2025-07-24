@@ -583,55 +583,173 @@ class IntelligentFormGrader:
             print(f"Error creating biomechanical metrics: {e}")
             return BiomechanicalMetrics()
     
-    def grade_repetition(self, rep_data: list) -> dict:
+    def grade_repetition(self, frame_metrics: list) -> dict:
         """
-        Analyzes a list of frame data for a full repetition.
-
+        Grade a complete repetition using advanced biomechanical analysis.
+        
         Args:
-            rep_data: A list of metric dictionaries, one for each frame of the rep.
-
+            frame_metrics: List of per-frame metric dictionaries
+            
         Returns:
-            A dictionary containing the overall score, faults, and other analysis.
+            Dictionary with score, faults, phase_durations, and detailed analysis
         """
-        if not rep_data:
-            return {'score': 0, 'faults': [], 'summary': "No data for analysis."}
-
-        overall_faults = set()
-        min_angles = {}
-        max_angles = {}
+        if not frame_metrics:
+            return {
+                'score': 0,
+                'faults': ['NO_DATA'],
+                'phase_durations': {},
+                'feedback': ["No movement data available for analysis."],
+                'biomechanical_summary': {}
+            }
         
-        # Initialize angle tracking
-        if rep_data and 'angles' in rep_data[0]:
-            angle_keys = rep_data[0]['angles'].keys()
-            min_angles = {key: 360 for key in angle_keys}
-            max_angles = {key: 0 for key in angle_keys}
+        print(f"[FormGrader] Analyzing {len(frame_metrics)} frames for rep grading")
         
-        # Aggregate data across the entire repetition
-        for frame_metrics in rep_data:
-            angles = frame_metrics.get('angles', {})
-            for angle_name, value in angles.items():
-                if value < min_angles.get(angle_name, 360):
-                    min_angles[angle_name] = value
-                if value > max_angles.get(angle_name, 0):
-                    max_angles[angle_name] = value
-
-        # Comprehensive fault analysis
-        self._analyze_depth_faults(min_angles, overall_faults)
-        self._analyze_symmetry_faults(rep_data, overall_faults)
-        self._analyze_stability_faults(rep_data, overall_faults)
-        self._analyze_form_faults(rep_data, overall_faults)
-
-        # Calculate final score
-        final_score = self._calculate_rep_score(overall_faults)
+        # Extract key metrics across all frames
+        angles_data = []
+        velocities_data = []
+        positions_data = []
+        
+        for frame in frame_metrics:
+            if 'angles' in frame:
+                angles_data.append(frame['angles'])
+            if 'velocities' in frame:
+                velocities_data.append(frame['velocities'])
+            if 'positions' in frame:
+                positions_data.append(frame['positions'])
+        
+        if not angles_data:
+            return {
+                'score': 0,
+                'faults': ['INSUFFICIENT_DATA'],
+                'phase_durations': {},
+                'feedback': ["Insufficient angle data for analysis."],
+                'biomechanical_summary': {}
+            }
+        
+        # Analyze movement quality with dynamic scoring
+        faults = []
+        base_score = 100
+        
+        # 1. Depth Analysis (Dynamic based on movement range)
+        knee_angles = [angles.get('knee', angles.get('knee_left', 180)) for angles in angles_data]
+        min_knee_angle = min(knee_angles) if knee_angles else 180
+        max_knee_angle = max(knee_angles) if knee_angles else 180
+        movement_range = max_knee_angle - min_knee_angle
+        
+        print(f"[FormGrader] Knee angle range: {min_knee_angle:.1f}° to {max_knee_angle:.1f}° (range: {movement_range:.1f}°)")
+        
+        # Dynamic depth scoring based on movement range
+        if movement_range < 30:
+            faults.append('INSUFFICIENT_DEPTH')
+            depth_penalty = max(5, min(25, 30 - movement_range))  # 5-25 point penalty
+            base_score -= depth_penalty
+            print(f"[FormGrader] Insufficient depth penalty: -{depth_penalty} points")
+        elif min_knee_angle < 70:
+            # Good depth - bonus points for deep squats
+            depth_bonus = min(5, (70 - min_knee_angle) / 10)
+            base_score += depth_bonus
+            print(f"[FormGrader] Deep squat bonus: +{depth_bonus:.1f} points")
+        
+        # 2. Back Position Analysis (Dynamic)
+        back_angles = [angles.get('back', angles.get('trunk', 180)) for angles in angles_data]
+        avg_back_angle = sum(back_angles) / len(back_angles) if back_angles else 180
+        back_variance = sum((angle - avg_back_angle) ** 2 for angle in back_angles) / len(back_angles) if len(back_angles) > 1 else 0
+        
+        print(f"[FormGrader] Back angle avg: {avg_back_angle:.1f}°, variance: {back_variance:.2f}")
+        
+        # Dynamic back penalty based on variance and extreme angles
+        if back_variance > 50:  # High variance = inconsistent back position
+            faults.append('BACK_ROUNDING')
+            back_penalty = min(15, back_variance / 5)  # Variable penalty
+            base_score -= back_penalty
+            print(f"[FormGrader] Back inconsistency penalty: -{back_penalty:.1f} points")
+        elif avg_back_angle < 160:  # Too much forward lean
+            faults.append('FORWARD_LEAN')
+            lean_penalty = min(10, (160 - avg_back_angle) / 5)
+            base_score -= lean_penalty
+            print(f"[FormGrader] Forward lean penalty: -{lean_penalty:.1f} points")
+        
+        # 3. Stability Analysis (Dynamic)
+        if positions_data:
+            center_positions = []
+            for pos in positions_data:
+                if 'center_of_mass' in pos:
+                    center_positions.append(pos['center_of_mass'])
+            
+            if len(center_positions) > 5:
+                x_positions = [pos.get('x', 0) for pos in center_positions]
+                stability_variance = sum((x - sum(x_positions)/len(x_positions)) ** 2 for x in x_positions) / len(x_positions)
+                
+                print(f"[FormGrader] Stability variance: {stability_variance:.4f}")
+                
+                if stability_variance > 0.001:  # Threshold for instability
+                    faults.append('POOR_STABILITY')
+                    stability_penalty = min(10, stability_variance * 1000)  # Scale penalty
+                    base_score -= stability_penalty
+                    print(f"[FormGrader] Stability penalty: -{stability_penalty:.2f} points")
+        
+        # 4. Tempo Analysis (Reward consistent tempo)
+        if len(frame_metrics) > 0:
+            rep_duration = len(frame_metrics) / 30.0  # Assuming 30 FPS
+            print(f"[FormGrader] Rep duration: {rep_duration:.2f}s")
+            
+            if rep_duration < 1.0:  # Too fast
+                faults.append('TOO_FAST')
+                tempo_penalty = (1.0 - rep_duration) * 10
+                base_score -= tempo_penalty
+                print(f"[FormGrader] Too fast penalty: -{tempo_penalty:.1f} points")
+            elif rep_duration > 4.0:  # Too slow
+                faults.append('TOO_SLOW')
+                tempo_penalty = min(10, (rep_duration - 4.0) * 2)
+                base_score -= tempo_penalty
+                print(f"[FormGrader] Too slow penalty: -{tempo_penalty:.1f} points")
+            else:
+                # Good tempo bonus
+                tempo_bonus = 2
+                base_score += tempo_bonus
+                print(f"[FormGrader] Good tempo bonus: +{tempo_bonus} points")
+        
+        # Ensure score is within bounds
+        final_score = max(0, min(100, int(base_score)))
+        
+        print(f"[FormGrader] Final score: {final_score}% with faults: {faults}")
+        
+        # Generate feedback
+        feedback = []
+        if final_score >= 85:
+            feedback.append("Excellent form! Keep it up!")
+        elif final_score >= 70:
+            feedback.append("Good form with minor improvements needed.")
+        elif final_score >= 50:
+            feedback.append("Moderate form - focus on the highlighted issues.")
+        else:
+            feedback.append("Poor form - please review technique.")
+        
+        # Add specific feedback for each fault
+        fault_feedback = {
+            'INSUFFICIENT_DEPTH': "Go deeper - aim for thighs parallel to ground.",
+            'BACK_ROUNDING': "Keep your back straight and chest up.",
+            'FORWARD_LEAN': "Maintain upright posture, don't lean forward.",
+            'POOR_STABILITY': "Focus on balance and core engagement.",
+            'TOO_FAST': "Slow down - control the movement.",
+            'TOO_SLOW': "Pick up the pace slightly for better momentum."
+        }
+        
+        for fault in faults:
+            if fault in fault_feedback:
+                feedback.append(fault_feedback[fault])
         
         return {
             'score': final_score,
-            'faults': list(overall_faults),
-            'summary': f"Rep analysis complete. Score: {final_score}%",
-            'min_angles': min_angles,
-            'max_angles': max_angles,
-            'confidence': self._calculate_confidence_from_data(rep_data),
-            'recommendations': self._get_recommendations(overall_faults)
+            'faults': faults,
+            'feedback': feedback,
+            'phase_durations': {'total': len(frame_metrics) / 30.0},
+            'biomechanical_summary': {
+                'knee_depth': min_knee_angle,
+                'movement_range': movement_range,
+                'back_consistency': back_variance,
+                'rep_duration': len(frame_metrics) / 30.0
+            }
         }
     
     def _analyze_depth_faults(self, min_angles: dict, faults: set):

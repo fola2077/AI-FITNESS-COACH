@@ -62,6 +62,7 @@ class PoseProcessor:
         self.current_rep_metrics = []
         self.last_rep_analysis = {} # To store the analysis of the last completed rep
         self.rep_start_time = 0.0
+        self.phase_start_time = None  # For tempo calculation
         self.phase_transitions = []
         self.previous_metrics = None
         
@@ -212,14 +213,13 @@ class PoseProcessor:
                 self.phase = MovementPhase.BOTTOM
                 self.hit_bottom_this_rep = True
             elif is_standing:
-                # User gave up mid-descent
+                # User gave up mid-descent - let RepCounter handle this
                 self.phase = MovementPhase.STANDING
-                self._complete_rep(failed=True)
         elif prev_phase == MovementPhase.BOTTOM and not is_at_bottom:
             self.phase = MovementPhase.ASCENT
         elif prev_phase == MovementPhase.ASCENT and is_standing:
             self.phase = MovementPhase.STANDING
-            self._complete_rep(failed=False)
+            # Rep completion will be handled by RepCounter
         
         # Log phase transition
         if prev_phase != self.phase:
@@ -237,72 +237,6 @@ class PoseProcessor:
         
         print(f"Started rep {self.rep_counter.rep_count + 1}")
     
-    def _complete_rep(self, failed=False):
-        """
-        Complete the current repetition and analyze it.
-        
-        Args:
-            failed: Whether the rep failed (didn't reach bottom)
-        """
-        if self.rep_counter.rep_count == 0:
-            return  # No active rep to complete
-        
-        rep_end_time = time.time()
-        
-        # If failed rep (insufficient depth), add the fault
-        if failed or not self.hit_bottom_this_rep:
-            # Add insufficient depth fault to the last frame metrics
-            if self.current_rep_metrics:
-                # This will be handled by the form grader's penalty system
-                pass
-        
-        # Create repetition data
-        rep_data = RepetitionData(
-            rep_number=self.rep_counter.rep_count,
-            start_time=self.rep_start_time,
-            end_time=rep_end_time,
-            phase_transitions=self.phase_transitions.copy(),
-            frame_metrics=self.current_rep_metrics.copy(),
-            total_duration=rep_end_time - self.rep_start_time
-        )
-        
-        # Analyze the completed rep
-        if self.settings['enable_advanced_grading']:
-            analysis_result = self.form_grader.grade_repetition(rep_data)
-            
-            # Update legacy form score for compatibility
-            self.form_score = analysis_result.get('score', 100)
-            
-            # Extract faults for feedback system
-            self.current_faults = analysis_result.get('faults', [])
-            
-            # Generate feedback
-            feedback_text = f"Rep {self.rep_counter.rep_count} completed - Score: {self.form_score}%"
-            
-            self.feedback_log.append({
-                'timestamp': time.time(),
-                'message': feedback_text,
-                'rep_number': self.rep_counter.rep_count,
-                'score': self.form_score,
-                'analysis': analysis_result
-            })
-            
-            print(f"Rep {self.rep_counter.rep_count} completed - Score: {self.form_score:.1f}")
-        
-        # Reset for next rep
-        self.hit_bottom_this_rep = False
-        self.frame_counter = 0
-        self.fps = 0
-        self.back_angle_buffer.clear()
-        self.back_rounding_frames = 0
-        self.current_angles = {}
-        self.current_faults = []
-        self.form_score = 100
-        
-        # Reset attempt tracking
-        self.hit_bottom_this_rep = False
-        self.feedback_manager.clear_messages()
-
     def process_frame(self, frame):
         """
         Enhanced frame processing with advanced biomechanical analysis.
@@ -389,29 +323,38 @@ class PoseProcessor:
         Processes the collected data for a completed repetition and updates session analytics.
         """
         if not self.current_rep_data:
+            print("⚠️ No rep data to analyze")
             return
 
         print(f"ℹ️ Analyzing completed rep with {len(self.current_rep_data)} data points.")
 
         # Perform the advanced grading on the entire rep's data
         analysis_results = self.form_grader.grade_repetition(self.current_rep_data)
+        print(f"[DEBUG] Form grader analysis: {analysis_results}")
 
         # Store the detailed analysis to be picked up by the UI
         self.last_rep_analysis = analysis_results
+        # Add timestamp to know when this analysis was created
+        self.last_rep_analysis['timestamp'] = time.time()
 
         # Extract score and faults for session analytics
         score = analysis_results.get('score', 0)
         faults = analysis_results.get('faults', [])
+        feedback = analysis_results.get('feedback', [])
+        biomechanical_summary = analysis_results.get('biomechanical_summary', {})
+        
+        print(f"✅ Rep {self.rep_counter.rep_count} analyzed - Score: {score}%, Faults: {faults}")
 
-        # Update session manager with per-rep metrics
+        # Update session manager with comprehensive per-rep metrics
         self.session_manager.update_session(
             rep_count=self.rep_counter.rep_count,
             form_score=score,
             fault_data=faults,
             phase=self.phase.value if hasattr(self.phase, 'value') else str(self.phase),
+            biomechanical_metrics=biomechanical_summary,
             feedback_history=[{
                 'timestamp': time.time(),
-                'message': analysis_results.get('summary', ''),
+                'message': feedback[0] if feedback else f'Rep {self.rep_counter.rep_count} completed',
                 'category': 'form'
             }]
         )
@@ -514,10 +457,25 @@ class PoseProcessor:
         rep_state = self.rep_counter.update(angles)
         print(f"[DEBUG] RepCounter state: phase={rep_state.phase}, rep_completed={rep_state.rep_completed}, rep_count={self.rep_counter.rep_count}")
 
-        # Calculate basic form score for live feedback
+        # Calculate basic form score for live feedback (only when no recent rep analysis)
         faults, current_angles = self.analyze_form_improved(landmarks)
-        live_form_score = self.calculate_form_score(faults)
-        print(f"[DEBUG] Form faults: {faults}, Form score: {live_form_score}")
+        
+        # Clear old rep analysis after 10 seconds to allow fresh scoring
+        if (hasattr(self, 'last_rep_analysis') and self.last_rep_analysis and 
+            'timestamp' in self.last_rep_analysis and 
+            time.time() - self.last_rep_analysis['timestamp'] > 10):
+            print("[DEBUG] Clearing old rep analysis - starting fresh")
+            self.last_rep_analysis = None
+        
+        # Use the most recent rep analysis score if available, otherwise calculate live score
+        if hasattr(self, 'last_rep_analysis') and self.last_rep_analysis:
+            live_form_score = self.last_rep_analysis.get('score', 100)
+            print(f"[DEBUG] Using last rep analysis score: {live_form_score}")
+        else:
+            live_form_score = self.calculate_form_score(faults)
+            print(f"[DEBUG] Using calculated live score: {live_form_score}")
+        
+        print(f"[DEBUG] Form faults: {faults}, Final form score: {live_form_score}")
 
         # Store current data for legacy compatibility
         self.current_angles = current_angles
@@ -528,6 +486,10 @@ class PoseProcessor:
         # If a rep is in progress, collect data for this frame
         if rep_state.phase != 'standing' or self.current_rep_data:
             self.current_rep_data.append(metrics)
+            # Clear old rep analysis when starting a new rep
+            if rep_state.phase != 'standing' and not self.current_rep_data[:-1]:  # First frame of new rep
+                print("[DEBUG] Starting new rep - clearing previous analysis")
+                self.last_rep_analysis = None
 
         # --- Post-Rep Analysis Trigger ---
         # Check if a rep was just completed
@@ -536,25 +498,37 @@ class PoseProcessor:
             # The analysis result is now in self.last_rep_analysis
 
         # --- Advanced Metrics Calculation ---
-        # Stability: variance of center of mass X over last 10 frames
+        # Stability: variance of center of mass X over last 10 frames (scaled for visibility)
         stability = 0.0
         if 'positions' in metrics and 'center_of_mass' in metrics['positions']:
-            self.stability_buffer.append(metrics['positions']['center_of_mass']['x'])
+            com_x = metrics['positions']['center_of_mass']['x']
+            self.stability_buffer.append(com_x)
             if len(self.stability_buffer) >= 5:
-                stability = float(np.var(list(self.stability_buffer)))
+                # Scale by 1000 to make it more visible (0.001 -> 1.0)
+                stability = float(np.var(list(self.stability_buffer)) * 1000)
+                print(f"[DEBUG] Stability: {stability:.3f}")
 
         # Tempo: duration of current rep (if in progress)
         tempo = 0.0
-        if self.rep_start_time and rep_state.phase != 'standing':
-            tempo = time.time() - self.rep_start_time
+        if rep_state.phase != 'standing':
+            if not hasattr(self, 'phase_start_time') or not self.phase_start_time:
+                self.phase_start_time = time.time()
+            tempo = time.time() - self.phase_start_time
+        else:
+            self.phase_start_time = None
+        print(f"[DEBUG] Tempo: {tempo:.2f}s")
 
-        # Balance: difference between left and right foot positions (X)
+        # Balance: difference between left and right foot positions (X) scaled for visibility
         balance = 0.0
         if 'positions' in metrics:
             left_ankle = metrics['positions'].get('left_ankle', None)
             right_ankle = metrics['positions'].get('right_ankle', None)
             if left_ankle and right_ankle:
-                balance = abs(left_ankle['x'] - right_ankle['x'])
+                # Scale by 100 to make it more visible (0.01 -> 1.0)
+                balance = abs(left_ankle['x'] - right_ankle['x']) * 100
+                print(f"[DEBUG] Balance: {balance:.3f}")
+            else:
+                print(f"[DEBUG] Balance: Missing ankle positions")
 
         # --- Real-time Data for UI ---
         live_results = {
@@ -692,9 +666,10 @@ class PoseProcessor:
         return abs(angle)
 
     def calculate_form_score(self, faults):
-        """Calculate overall form score"""
+        """Calculate overall form score with dynamic penalties based on angles"""
         base_score = 100
         
+        # Base fault penalties
         fault_penalties = {
             "BACK_ROUNDING": 25,
             "KNEE_VALGUS": 20,
@@ -704,11 +679,38 @@ class PoseProcessor:
             "HEEL_RISE": 10
         }
         
+        # Apply base penalties
         for fault in faults:
             penalty = fault_penalties.get(fault, 5)
             base_score -= penalty
         
-        return max(0, min(100, base_score))
+        # Add dynamic scoring based on current angles for more realistic variation
+        if hasattr(self, 'current_angles') and self.current_angles:
+            # Adjust score based on knee angle quality
+            knee_angle = self.current_angles.get('knee', 180)
+            if knee_angle < 180:  # Only when squatting
+                if knee_angle > 120:  # Shallow squat
+                    base_score -= 5
+                elif knee_angle < 60:  # Very deep, good form
+                    base_score += 5
+            
+            # Adjust score based on back angle
+            back_angle = self.current_angles.get('back', 170)
+            if back_angle < 150:  # Some rounding
+                severity = (150 - back_angle) / 10  # More rounding = more penalty
+                base_score -= min(20, severity * 3)
+            
+            # Adjust based on trunk lean
+            trunk_angle = self.current_angles.get('trunk', 0)
+            if trunk_angle > 20:  # Forward lean
+                lean_penalty = (trunk_angle - 20) / 5  # Gradual penalty
+                base_score -= min(15, lean_penalty * 2)
+        
+        # Add some randomness for testing (remove this in production)
+        # import random
+        # base_score += random.randint(-3, 3)  # Small random variation for testing
+        
+        return max(10, min(100, int(base_score)))  # Ensure score stays between 10-100
 
     def update_phase_detection(self, knee_angle):
         """Enhanced phase detection with failed attempt tracking"""

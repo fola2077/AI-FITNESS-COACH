@@ -42,6 +42,9 @@ class MainWindow(QMainWindow):
         self.pose_processor = PoseProcessor(self.user_profile)
         self.feedback_manager = FeedbackManager()
         self.session_manager = SessionManager()
+        
+        # Connect session manager to pose processor
+        self.pose_processor.session_manager = self.session_manager
 
         self.timer = QTimer()
         self.is_session_active = False
@@ -489,10 +492,21 @@ class MainWindow(QMainWindow):
             else:
                 self.balance_label.setText("0.0")
 
-            # Update form score from current metrics
+            # Update form score with improved logic for more dynamic feedback
             current_score = live_metrics.get('form_score', None)
-            if isinstance(current_score, (int, float)) and current_score != 100:
-                self.form_score_label.setText(f"{current_score}%")
+            last_rep_analysis = live_metrics.get('last_rep_analysis', None)
+            
+            # Dynamic scoring logic - blend live and analysis scores for better feedback
+            if isinstance(current_score, (int, float)) and current_score > 0:
+                # Always show live score for immediate feedback
+                final_score = current_score
+                self.form_score_label.setText(f"{final_score}%")
+                print(f"[UI] Using live score: {final_score}%")
+            elif last_rep_analysis and last_rep_analysis.get('score') is not None:
+                # Fall back to analysis score if no live score available
+                final_score = last_rep_analysis.get('score')
+                self.form_score_label.setText(f"{final_score}%")
+                print(f"[UI] Using rep analysis score as fallback: {final_score}%")
             else:
                 self.form_score_label.setText("-")
 
