@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout,
                              QHBoxLayout, QWidget, QLabel, QFileDialog, QFrame,
                              QProgressBar, QTextEdit, QSplitter, QGridLayout,
-                             QGroupBox, QMenuBar, QMenu, QMessageBox)
+                             QGroupBox, QMenuBar, QMenu, QMessageBox, QComboBox)
 from PySide6.QtGui import QImage, QPixmap, QFont, QAction
 from PySide6.QtCore import Qt, QTimer
 from src.capture.camera import CameraManager
@@ -18,6 +18,51 @@ from src.feedback.feedback_manager import FeedbackManager
 from src.gui.widgets.session_report import SessionReportDialog, SessionManager
 
 class MainWindow(QMainWindow):
+    def setup_camera(self, source):
+        """Setup camera or video source"""
+        try:
+            if self.camera_manager:
+                self.camera_manager.release()
+
+            self.camera_manager = CameraManager(source)
+            if not self.camera_manager.isOpened():
+                raise RuntimeError("Failed to open video source")
+
+            # Determine source type
+            source_type = 'video' if isinstance(source, str) else 'webcam'
+
+            # Set session start time for duration calculation
+            self.session_start_time = time.time()
+
+            # Reset and start session with proper source type
+            self.pose_processor.reset()
+            self.pose_processor.start_session(source_type)  # Pass the source type
+            self.session_manager.reset_session()  # Reset before starting
+            self.session_manager.start_session()
+            self.is_session_active = True
+
+            # Ensure session manager is properly connected
+            if hasattr(self.pose_processor, 'session_manager') and self.pose_processor.session_manager:
+                print("[DEBUG] Session manager already connected to pose processor")
+            else:
+                self.pose_processor.session_manager = self.session_manager
+                print("[DEBUG] Connected session manager to pose processor")
+
+            # DEBUG: Force session state to ACTIVE for troubleshooting
+            from src.processing.pose_processor import SessionState
+            self.pose_processor.session_state = SessionState.ACTIVE
+            print("[DEBUG] Forced session state to ACTIVE after camera setup.")
+
+            # Update UI
+            self.webcam_button.setEnabled(False)
+            self.video_button.setEnabled(False)
+            self.stop_button.setEnabled(True)
+
+            # Start frame updates
+            self.timer.start(33)  # ~30 FPS
+
+        except Exception as e:
+            raise e
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AI Fitness Coach - Squat Form Analyzer")
@@ -46,8 +91,16 @@ class MainWindow(QMainWindow):
         # Connect session manager to pose processor
         self.pose_processor.session_manager = self.session_manager
 
+        # Ensure the session manager connection is working
+        print(f"[DEBUG] Session manager connected: {self.pose_processor.session_manager is self.session_manager}")
+
         self.timer = QTimer()
         self.is_session_active = False
+
+        # Timer for updating session data (sync pose processor session manager data)
+        self.session_sync_timer = QTimer()
+        self.session_sync_timer.timeout.connect(self.sync_session_data_from_processor)
+        self.session_sync_timer.start(1000)  # Sync every second
 
         # Timer for displaying post-rep analysis
         self.rep_analysis_timer = QTimer(self)
@@ -141,6 +194,12 @@ class MainWindow(QMainWindow):
         # Help Menu
         help_menu = menubar.addMenu('Help')
 
+        debug_session_action = QAction('Debug Session Data...', self)
+        debug_session_action.triggered.connect(self.debug_session_data)
+        help_menu.addAction(debug_session_action)
+
+        help_menu.addSeparator()
+
         about_action = QAction('About', self)
         about_action.triggered.connect(self.show_about_dialog)
         help_menu.addAction(about_action)
@@ -168,6 +227,16 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.webcam_button)
         controls_layout.addWidget(self.video_button)
         controls_layout.addWidget(self.stop_button)
+
+        # Add difficulty dropdown
+        self.difficulty_label = QLabel("Difficulty:")
+        self.difficulty_combo = QComboBox()
+        self.difficulty_combo.addItems(["Beginner", "Casual", "Professional"])
+        self.difficulty_combo.setCurrentIndex(0)
+        controls_layout.addWidget(self.difficulty_label)
+        controls_layout.addWidget(self.difficulty_combo)
+        self.difficulty_combo.currentTextChanged.connect(self.on_difficulty_changed)
+
         layout.addWidget(controls_group)
         return panel
 
@@ -370,41 +439,28 @@ class MainWindow(QMainWindow):
                 print(f"Video loading error: {str(e)}")
                 QMessageBox.critical(self, "Video Error", f"Failed to load video:\n{str(e)}")
 
-    def setup_camera(self, source):
-        """Setup camera or video source"""
+    def on_difficulty_changed(self, text):
+        # Map UI text to backend difficulty string
+        difficulty_map = {
+            "Beginner": "beginner",
+            "Casual": "casual",
+            "Professional": "professional"
+        }
+        difficulty = difficulty_map.get(text, "beginner")
+        # Update the grader difficulty in real time
         try:
-            if self.camera_manager:
-                self.camera_manager.release()
-
-            self.camera_manager = CameraManager(source)
-            if not self.camera_manager.isOpened():
-                raise RuntimeError("Failed to open video source")
-
-            # Determine source type
-            source_type = 'video' if isinstance(source, str) else 'webcam'
-
-            # Reset and start session with proper source type
-            self.pose_processor.reset()
-            self.pose_processor.start_session(source_type)  # Pass the source type
-            self.session_manager.reset_session()  # Reset before starting
-            self.session_manager.start_session()
-            self.is_session_active = True
-
-            # DEBUG: Force session state to ACTIVE for troubleshooting
-            from src.processing.pose_processor import SessionState
-            self.pose_processor.session_state = SessionState.ACTIVE
-            print("[DEBUG] Forced session state to ACTIVE after camera setup.")
-
-            # Update UI
-            self.webcam_button.setEnabled(False)
-            self.video_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
-
-            # Start frame updates
-            self.timer.start(33)  # ~30 FPS
-
+            # If pose_processor has a grader attribute, update it
+            if hasattr(self.pose_processor, "grader") and hasattr(self.pose_processor.grader, "set_difficulty"):
+                self.pose_processor.grader.set_difficulty(difficulty)
+            # If pose_processor itself supports set_difficulty
+            elif hasattr(self.pose_processor, "set_difficulty"):
+                self.pose_processor.set_difficulty(difficulty)
+            # Optionally, update user_profile skill_level if needed
+            if hasattr(self, "user_profile"):
+                self.user_profile.skill_level = difficulty.capitalize()
+            print(f"[UI] Difficulty set to: {difficulty}")
         except Exception as e:
-            raise e
+            print(f"[UI] Error setting difficulty: {e}")
 
     def stop_session(self):
         """Stop current session"""
@@ -453,9 +509,70 @@ class MainWindow(QMainWindow):
                 if live_results.get('last_rep_analysis'):
                     self.display_rep_analysis(live_results['last_rep_analysis'])
 
+                # Sync session data between pose processor and main window
+                self.sync_session_data_from_processor()
+
         except Exception as e:
             print(f"Frame processing error: {e}")
             self.display_frame(frame) # Display raw frame on error
+
+    def sync_session_data_from_processor(self):
+        """Sync session data from pose processor to main window session manager"""
+        try:
+            if (hasattr(self, 'pose_processor') and 
+                hasattr(self.pose_processor, 'session_manager') and 
+                self.pose_processor.session_manager and
+                hasattr(self, 'session_manager') and
+                self.session_manager):
+                
+                # Get data from pose processor's session manager
+                pose_session_data = self.pose_processor.session_manager.get_session_data()
+                
+                # Also get rep count directly from RepCounter as fallback
+                direct_rep_count = 0
+                if hasattr(self.pose_processor, 'rep_counter') and self.pose_processor.rep_counter:
+                    direct_rep_count = getattr(self.pose_processor.rep_counter, 'rep_count', 0)
+                
+                # Use the higher of the two rep counts (to handle sync issues)
+                session_rep_count = pose_session_data.get('total_reps', 0) if pose_session_data else 0
+                final_rep_count = max(session_rep_count, direct_rep_count)
+                
+                # Update if we have any reps or if there's a mismatch
+                if final_rep_count > 0 or session_rep_count != direct_rep_count:
+                    print(f"[DEBUG] Syncing session data: session={session_rep_count}, direct={direct_rep_count}, using={final_rep_count}")
+                    
+                    # Create basic session data if pose_session_data is empty
+                    if not pose_session_data or final_rep_count > session_rep_count:
+                        # Use RepCounter data directly
+                        print(f"[DEBUG] Using RepCounter data directly for {final_rep_count} reps")
+                        self.session_manager.session_data.update({
+                            'total_reps': final_rep_count,
+                            'form_scores': [self.pose_processor.form_score] * final_rep_count if final_rep_count > 0 else [],
+                            'feedback_history': [{
+                                'timestamp': time.time(),
+                                'message': f'Rep {final_rep_count} completed',
+                                'category': 'form'
+                            }] if final_rep_count > 0 else [],
+                            'fault_frequency': {},
+                            'faulty_reps': {},
+                            'phase_durations': {'standing': 100},  # Default phase data
+                            'start_time': getattr(self, 'session_start_time', time.time()),
+                            'end_time': None
+                        })
+                    else:
+                        # Copy the session data from pose processor
+                        self.session_manager.session_data.update({
+                            'total_reps': final_rep_count,
+                            'form_scores': pose_session_data.get('form_scores', []),
+                            'feedback_history': pose_session_data.get('feedback_history', []),
+                            'fault_frequency': pose_session_data.get('fault_frequency', {}),
+                            'faulty_reps': pose_session_data.get('faulty_reps', {}),
+                            'phase_durations': pose_session_data.get('phase_durations', {}),
+                            'start_time': pose_session_data.get('start_time'),
+                            'end_time': pose_session_data.get('end_time')
+                        })
+        except Exception as e:
+            print(f"[DEBUG] Error syncing session data: {e}")
 
     def update_ui(self, live_metrics: dict):
         """
@@ -588,11 +705,41 @@ class MainWindow(QMainWindow):
     def show_session_report(self):
         """Show session report using your existing SessionReportDialog"""
         try:
-            session_data = self.session_manager.get_session_summary()
+            # Get session data from the session manager
+            if hasattr(self, 'session_manager') and self.session_manager:
+                session_data = self.session_manager.get_session_data()
+            else:
+                # Fallback: create basic session data from current state
+                session_data = {
+                    'total_reps': getattr(self.pose_processor.rep_counter, 'rep_count', 0) if hasattr(self.pose_processor, 'rep_counter') else 0,
+                    'duration': time.time() - getattr(self, 'session_start_time', time.time()),
+                    'avg_form_score': getattr(self.pose_processor, 'form_score', 100) if hasattr(self.pose_processor, 'form_score') else 100,
+                    'best_form_score': 100,
+                    'form_scores': [getattr(self.pose_processor, 'form_score', 100)] if hasattr(self.pose_processor, 'form_score') else [],
+                    'feedback_history': [],
+                    'fault_frequency': {},
+                    'faulty_reps': {},
+                    'phase_durations': {}
+                }
+            
+            # Debug: Print what data we have
+            print(f"[DEBUG] Session data for report: {session_data}")
+            
+            if not session_data or session_data.get('total_reps', 0) == 0:
+                QMessageBox.information(
+                    self, 
+                    "Session Report", 
+                    "No session data available yet. Start a workout session and perform some reps to see detailed analytics."
+                )
+                return
+            
+            # Create and show the session report dialog
             dialog = SessionReportDialog(session_data, self)
             dialog.exec()
+            
         except Exception as e:
-            QMessageBox.warning(self, "Report Error", f"Could not generate session report:\n{str(e)}")
+            print(f"[ERROR] Failed to show session report: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to generate session report: {str(e)}")
 
     def show_about_dialog(self):
         """Show about dialog"""
@@ -600,6 +747,34 @@ class MainWindow(QMainWindow):
                         "AI Fitness Coach v1.0\n\n"
                         "Real-time squat form analysis using computer vision.\n"
                         "Built with MediaPipe and PySide6.")
+
+    def debug_session_data(self):
+        """Debug method to check session data collection"""
+        if hasattr(self, 'session_manager') and self.session_manager:
+            data = self.session_manager.get_session_data()
+            print(f"[DEBUG] Current session data: {data}")
+            print(f"[DEBUG] Rep counter: {getattr(self.pose_processor.rep_counter, 'rep_count', 'No rep counter') if hasattr(self.pose_processor, 'rep_counter') else 'No rep counter'}")
+            print(f"[DEBUG] Form score: {getattr(self.pose_processor, 'form_score', 'No form score') if hasattr(self.pose_processor, 'form_score') else 'No form score'}")
+            print(f"[DEBUG] Session active: {self.is_session_active}")
+            print(f"[DEBUG] Pose processor session state: {getattr(self.pose_processor, 'session_state', 'No session state')}")
+        else:
+            print("[DEBUG] No session manager found")
+            
+        # Also show the info in a dialog for user
+        if hasattr(self, 'session_manager') and self.session_manager:
+            data = self.session_manager.get_session_data()
+            total_reps = data.get('total_reps', 0)
+            feedback_count = len(data.get('feedback_history', []))
+            QMessageBox.information(
+                self, 
+                "Debug Session Data", 
+                f"Total Reps: {total_reps}\n"
+                f"Feedback Messages: {feedback_count}\n"
+                f"Session Active: {self.is_session_active}\n"
+                f"Session Manager Connected: {hasattr(self.pose_processor, 'session_manager')}"
+            )
+        else:
+            QMessageBox.warning(self, "Debug Session Data", "No session manager found!")
 
     def closeEvent(self, event):
         """Handle application close event."""

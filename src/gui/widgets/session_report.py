@@ -247,7 +247,7 @@ class SessionReportDialog(QDialog):
     def analyze_performance(self):
         """Analyze performance trends and provide insights"""
         analysis = []
-        
+
         total_reps = self.session_data.get('total_reps', 0)
         avg_score = self.session_data.get('avg_form_score', 0)
         best_score = self.session_data.get('best_form_score', 0)

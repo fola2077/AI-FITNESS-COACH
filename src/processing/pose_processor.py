@@ -322,43 +322,66 @@ class PoseProcessor:
         """
         Processes the collected data for a completed repetition and updates session analytics.
         """
+        print(f"🔄 Processing completed rep {self.rep_counter.rep_count}")
+        
+        # Always update session manager with rep count, even without analysis data
+        if self.session_manager:
+            print(f"📊 Updating session manager: rep_count={self.rep_counter.rep_count}")
+            self.session_manager.update_session(
+                rep_count=self.rep_counter.rep_count,
+                form_score=self.form_score,  # Use current form score as fallback
+                fault_data=[],
+                phase=self.phase.value if hasattr(self.phase, 'value') else str(self.phase),
+                feedback_history=[{
+                    'timestamp': time.time(),
+                    'message': f'Rep {self.rep_counter.rep_count} completed',
+                    'category': 'form'
+                }]
+            )
+
+        # Try to perform detailed analysis if we have rep data
         if not self.current_rep_data:
-            print("⚠️ No rep data to analyze")
+            print("⚠️ No rep data to analyze - using basic metrics only")
             return
 
         print(f"ℹ️ Analyzing completed rep with {len(self.current_rep_data)} data points.")
 
-        # Perform the advanced grading on the entire rep's data
-        analysis_results = self.form_grader.grade_repetition(self.current_rep_data)
-        print(f"[DEBUG] Form grader analysis: {analysis_results}")
+        try:
+            # Perform the advanced grading on the entire rep's data
+            analysis_results = self.form_grader.grade_repetition(self.current_rep_data)
+            print(f"[DEBUG] Form grader analysis: {analysis_results}")
 
-        # Store the detailed analysis to be picked up by the UI
-        self.last_rep_analysis = analysis_results
-        # Add timestamp to know when this analysis was created
-        self.last_rep_analysis['timestamp'] = time.time()
+            # Store the detailed analysis to be picked up by the UI
+            self.last_rep_analysis = analysis_results
+            # Add timestamp to know when this analysis was created
+            self.last_rep_analysis['timestamp'] = time.time()
 
-        # Extract score and faults for session analytics
-        score = analysis_results.get('score', 0)
-        faults = analysis_results.get('faults', [])
-        feedback = analysis_results.get('feedback', [])
-        biomechanical_summary = analysis_results.get('biomechanical_summary', {})
-        
-        print(f"✅ Rep {self.rep_counter.rep_count} analyzed - Score: {score}%, Faults: {faults}")
+            # Extract score and faults for session analytics
+            score = analysis_results.get('score', 0)
+            faults = analysis_results.get('faults', [])
+            feedback = analysis_results.get('feedback', [])
+            biomechanical_summary = analysis_results.get('biomechanical_summary', {})
+            
+            print(f"✅ Rep {self.rep_counter.rep_count} analyzed - Score: {score}%, Faults: {faults}")
 
-        # Update session manager with comprehensive per-rep metrics
-        self.session_manager.update_session(
-            rep_count=self.rep_counter.rep_count,
-            form_score=score,
-            fault_data=faults,
-            phase=self.phase.value if hasattr(self.phase, 'value') else str(self.phase),
-            biomechanical_metrics=biomechanical_summary,
-            feedback_history=[{
-                'timestamp': time.time(),
-                'message': feedback[0] if feedback else f'Rep {self.rep_counter.rep_count} completed',
-                'category': 'form'
-            }]
-        )
+            # Update session manager again with detailed analysis
+            if self.session_manager:
+                self.session_manager.update_session(
+                    rep_count=self.rep_counter.rep_count,
+                    form_score=score,
+                    fault_data=faults,
+                    phase=self.phase.value if hasattr(self.phase, 'value') else str(self.phase),
+                    biomechanical_metrics=biomechanical_summary,
+                    feedback_history=[{
+                        'timestamp': time.time(),
+                        'message': feedback[0] if feedback else f'Rep {self.rep_counter.rep_count} completed with {score}% form score',
+                        'category': 'form'
+                    }]
+                )
 
+        except Exception as e:
+            print(f"⚠️ Error in rep analysis: {e}")
+            
         # Clear the accumulator for the next rep
         self.current_rep_data = []
     
