@@ -43,15 +43,13 @@ class MainWindow(QMainWindow):
 
             # Ensure session manager is properly connected
             if hasattr(self.pose_processor, 'session_manager') and self.pose_processor.session_manager:
-                print("[DEBUG] Session manager already connected to pose processor")
+                pass  # Already connected
             else:
                 self.pose_processor.session_manager = self.session_manager
-                print("[DEBUG] Connected session manager to pose processor")
 
-            # DEBUG: Force session state to ACTIVE for troubleshooting
+            # Force session state to ACTIVE
             from src.processing.pose_processor import SessionState
             self.pose_processor.session_state = SessionState.ACTIVE
-            print("[DEBUG] Forced session state to ACTIVE after camera setup.")
 
             # Update UI
             self.webcam_button.setEnabled(False)
@@ -90,9 +88,6 @@ class MainWindow(QMainWindow):
         
         # Connect session manager to pose processor
         self.pose_processor.session_manager = self.session_manager
-
-        # Ensure the session manager connection is working
-        print(f"[DEBUG] Session manager connected: {self.pose_processor.session_manager is self.session_manager}")
 
         self.timer = QTimer()
         self.is_session_active = False
@@ -458,9 +453,8 @@ class MainWindow(QMainWindow):
             # Optionally, update user_profile skill_level if needed
             if hasattr(self, "user_profile"):
                 self.user_profile.skill_level = difficulty.capitalize()
-            print(f"[UI] Difficulty set to: {difficulty}")
         except Exception as e:
-            print(f"[UI] Error setting difficulty: {e}")
+            pass  # Silent error handling
 
     def stop_session(self):
         """Stop current session"""
@@ -539,12 +533,9 @@ class MainWindow(QMainWindow):
                 
                 # Update if we have any reps or if there's a mismatch
                 if final_rep_count > 0 or session_rep_count != direct_rep_count:
-                    print(f"[DEBUG] Syncing session data: session={session_rep_count}, direct={direct_rep_count}, using={final_rep_count}")
-                    
                     # Create basic session data if pose_session_data is empty
                     if not pose_session_data or final_rep_count > session_rep_count:
                         # Use RepCounter data directly
-                        print(f"[DEBUG] Using RepCounter data directly for {final_rep_count} reps")
                         self.session_manager.session_data.update({
                             'total_reps': final_rep_count,
                             'form_scores': [self.pose_processor.form_score] * final_rep_count if final_rep_count > 0 else [],
@@ -572,7 +563,7 @@ class MainWindow(QMainWindow):
                             'end_time': pose_session_data.get('end_time')
                         })
         except Exception as e:
-            print(f"[DEBUG] Error syncing session data: {e}")
+            pass  # Silent error handling for sync operations
 
     def update_ui(self, live_metrics: dict):
         """
@@ -618,12 +609,10 @@ class MainWindow(QMainWindow):
                 # Always show live score for immediate feedback
                 final_score = current_score
                 self.form_score_label.setText(f"{final_score}%")
-                print(f"[UI] Using live score: {final_score}%")
             elif last_rep_analysis and last_rep_analysis.get('score') is not None:
                 # Fall back to analysis score if no live score available
                 final_score = last_rep_analysis.get('score')
                 self.form_score_label.setText(f"{final_score}%")
-                print(f"[UI] Using rep analysis score as fallback: {final_score}%")
             else:
                 self.form_score_label.setText("-")
 
@@ -738,7 +727,6 @@ class MainWindow(QMainWindow):
             dialog.exec()
             
         except Exception as e:
-            print(f"[ERROR] Failed to show session report: {e}")
             QMessageBox.warning(self, "Error", f"Failed to generate session report: {str(e)}")
 
     def show_about_dialog(self):
@@ -752,13 +740,9 @@ class MainWindow(QMainWindow):
         """Debug method to check session data collection"""
         if hasattr(self, 'session_manager') and self.session_manager:
             data = self.session_manager.get_session_data()
-            print(f"[DEBUG] Current session data: {data}")
-            print(f"[DEBUG] Rep counter: {getattr(self.pose_processor.rep_counter, 'rep_count', 'No rep counter') if hasattr(self.pose_processor, 'rep_counter') else 'No rep counter'}")
-            print(f"[DEBUG] Form score: {getattr(self.pose_processor, 'form_score', 'No form score') if hasattr(self.pose_processor, 'form_score') else 'No form score'}")
-            print(f"[DEBUG] Session active: {self.is_session_active}")
-            print(f"[DEBUG] Pose processor session state: {getattr(self.pose_processor, 'session_state', 'No session state')}")
+            # Debug information available if needed
         else:
-            print("[DEBUG] No session manager found")
+            pass  # No session manager
             
         # Also show the info in a dialog for user
         if hasattr(self, 'session_manager') and self.session_manager:
@@ -775,6 +759,49 @@ class MainWindow(QMainWindow):
             )
         else:
             QMessageBox.warning(self, "Debug Session Data", "No session manager found!")
+
+    def start_grading_in_background(self, frame_metrics):
+        """
+        Start FormGrader in a background thread for non-blocking analysis.
+        """
+        from src.gui.form_grader_worker import FormGraderWorker
+        from PySide6.QtCore import QThread
+        if hasattr(self, 'form_grader_thread') and self.form_grader_thread is not None and self.form_grader_thread.isRunning():
+            self.form_grader_thread.quit()
+            self.form_grader_thread.wait()
+
+        self.form_grader_thread = QThread()
+        # Assuming self.pose_processor has the grader instance
+        self.form_grader_worker = FormGraderWorker(self.pose_processor.grader, frame_metrics)
+        self.form_grader_worker.moveToThread(self.form_grader_thread)
+
+        self.form_grader_thread.started.connect(self.form_grader_worker.run)
+        self.form_grader_worker.grading_finished.connect(self.on_grading_finished)
+        self.form_grader_worker.grading_failed.connect(self.on_grading_failed)
+
+        # Clean up the thread and worker when finished
+        self.form_grader_worker.grading_finished.connect(self.form_grader_thread.quit)
+        self.form_grader_worker.grading_failed.connect(self.form_grader_thread.quit)
+        self.form_grader_thread.finished.connect(self.form_grader_worker.deleteLater)
+        self.form_grader_thread.finished.connect(self.form_grader_thread.deleteLater)
+
+        self.form_grader_thread.start()
+
+    def on_grading_finished(self, result):
+        """
+        Handle grading result from FormGraderWorker.
+        """
+        print(f"[FormGraderWorker] Grading result: {result}")
+        # Example: update UI with grading result
+        self.display_rep_analysis(result)
+
+    def on_grading_failed(self, error):
+        """
+        Handle grading error from FormGraderWorker.
+        """
+        print(f"[FormGraderWorker] Grading failed: {error}")
+        # Example: show error to user, log, etc.
+        QMessageBox.critical(self, "Grading Error", f"Form analysis failed:\n{error}")
 
     def closeEvent(self, event):
         """Handle application close event."""

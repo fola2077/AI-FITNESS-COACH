@@ -224,7 +224,6 @@ class PoseProcessor:
         # Log phase transition
         if prev_phase != self.phase:
             self.phase_transitions.append((self.phase, time.time()))
-            print(f"Phase transition: {prev_phase.value} -> {self.phase.value}")
         
         return self.phase
     
@@ -234,8 +233,6 @@ class PoseProcessor:
         self.current_rep_metrics = []
         self.phase_transitions = [(MovementPhase.DESCENT, self.rep_start_time)]
         self.hit_bottom_this_rep = False
-        
-        print(f"Started rep {self.rep_counter.rep_count + 1}")
     
     def process_frame(self, frame):
         """
@@ -267,11 +264,6 @@ class PoseProcessor:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
         # Log frame details for debugging
-        # Only print frame processing info occasionally for performance
-        self.frame_debug_counter = getattr(self, 'frame_debug_counter', 0) + 1
-        if self.frame_debug_counter % 60 == 0:  # Every 2 seconds
-            print(f"⚙️ Processing frame: {frame.shape[1]}x{frame.shape[0]} px")
-        
         # Process the frame with MediaPipe
         pose_results = self.pose_detector.process_frame(frame_rgb)
         self.current_pose_results = pose_results  # Store for drawing
@@ -282,38 +274,21 @@ class PoseProcessor:
             self.pose_detector.results = pose_results
             self.pose_detector.draw_landmarks(display_frame)
             
-            # Diagnostic output about pose detection (reduced for performance)
-            if self.frame_debug_counter % 60 == 0:
-                print("✅ Pose detected successfully!")
-                landmarks_count = len(pose_results.pose_landmarks.landmark)
-                print(f"   Found {landmarks_count} landmarks")
-        else:
-            if self.frame_debug_counter % 60 == 0:
-                print("❌ No pose detected in this frame")
-            
         # 3. State Management
         if self.session_state == SessionState.STOPPED:
-            if self.frame_debug_counter % 180 == 0:  # Only every 6 seconds
-                print("ℹ️ Session is currently stopped")
             return self._get_basic_metrics(display_frame)
         
         if not pose_results or not pose_results.pose_landmarks:
-            if self.frame_debug_counter % 180 == 0:  # Only every 6 seconds
-                print("ℹ️ No landmarks to process")
             return self._get_basic_metrics(display_frame)
         
         landmarks = pose_results.pose_landmarks.landmark
         
         # 4. Handle Calibration State
         if self.session_state == SessionState.CALIBRATING:
-            if self.frame_debug_counter % 90 == 0:  # Only every 3 seconds
-                print("ℹ️ Session in calibration mode")
             return self._handle_calibration(landmarks, display_frame)
         
         # 5. Active Analysis
         if self.session_state == SessionState.ACTIVE:
-            if self.frame_debug_counter % 180 == 0:  # Only every 6 seconds
-                print("ℹ️ Session in active analysis mode")
             return self._handle_active_analysis(landmarks, display_frame)
         
         return self._get_basic_metrics(display_frame)
@@ -326,7 +301,6 @@ class PoseProcessor:
         
         # Always update session manager with rep count, even without analysis data
         if self.session_manager:
-            print(f"📊 Updating session manager: rep_count={self.rep_counter.rep_count}")
             self.session_manager.update_session(
                 rep_count=self.rep_counter.rep_count,
                 form_score=self.form_score,  # Use current form score as fallback
@@ -341,15 +315,26 @@ class PoseProcessor:
 
         # Try to perform detailed analysis if we have rep data
         if not self.current_rep_data:
-            print("⚠️ No rep data to analyze - using basic metrics only")
             return
 
-        print(f"ℹ️ Analyzing completed rep with {len(self.current_rep_data)} data points.")
-
         try:
-            # Perform the advanced grading on the entire rep's data
-            analysis_results = self.form_grader.grade_repetition(self.current_rep_data)
-            print(f"[DEBUG] Form grader analysis: {analysis_results}")
+            # Convert collected frame data to BiomechanicalMetrics objects for form grader
+            biomechanical_metrics_list = []
+            previous_metrics = None
+            
+            for i, frame_data in enumerate(self.current_rep_data):
+                landmarks = frame_data['landmarks']
+                metrics_obj = self.form_grader.create_biomechanical_metrics(landmarks, previous_metrics)
+                biomechanical_metrics_list.append(metrics_obj)
+                previous_metrics = metrics_obj
+                
+                # Debug: check the type of the metrics object
+                if i == 0:  # Only check first frame to avoid spam
+                    print(f"[DEBUG] Created metrics object type: {type(metrics_obj)}")
+                    print(f"[DEBUG] Has landmark_visibility: {hasattr(metrics_obj, 'landmark_visibility')}")
+            
+            # Perform the advanced grading on the converted data
+            analysis_results = self.form_grader.grade_repetition(biomechanical_metrics_list)
 
             # Store the detailed analysis to be picked up by the UI
             self.last_rep_analysis = analysis_results
@@ -361,10 +346,8 @@ class PoseProcessor:
             faults = analysis_results.get('faults', [])
             feedback = analysis_results.get('feedback', [])
             biomechanical_summary = analysis_results.get('biomechanical_summary', {})
-            
-            print(f"✅ Rep {self.rep_counter.rep_count} analyzed - Score: {score}%, Faults: {faults}")
 
-            # Update session manager again with detailed analysis
+            print(f"✅ Rep {self.rep_counter.rep_count} analyzed - Score: {score}%")            # Update session manager again with detailed analysis
             if self.session_manager:
                 self.session_manager.update_session(
                     rep_count=self.rep_counter.rep_count,
@@ -423,12 +406,10 @@ class PoseProcessor:
         if self.calibration_frames == 30:  # Update ratio partway through calibration
             torso_leg_ratio = self.form_grader.normalizer.calculate_torso_leg_ratio(landmarks)
             self.user_profile.torso_to_leg_ratio = torso_leg_ratio
-            print(f"Calibrated torso-to-leg ratio: {torso_leg_ratio:.2f}")
         
         # Complete calibration
         if self.calibration_frames >= self.settings['calibration_required_frames']:
             self.session_state = SessionState.ACTIVE
-            print("Calibration complete - Session now active!")
             return {
                 'reps': self.rep_counter.rep_count,
                 'rep_count': self.rep_counter.rep_count,
@@ -473,12 +454,9 @@ class PoseProcessor:
         # Calculate basic metrics needed for phase detection
         metrics = self.pose_detector.get_all_metrics(landmarks, frame.shape)
         angles = metrics.get('angles', {})
-        print(f"[DEBUG] Frame metrics: {metrics}")
-        print(f"[DEBUG] Angles for rep counter: {angles}")
 
         # Update rep counter and phase using the RepCounter object
         rep_state = self.rep_counter.update(angles)
-        print(f"[DEBUG] RepCounter state: phase={rep_state.phase}, rep_completed={rep_state.rep_completed}, rep_count={self.rep_counter.rep_count}")
 
         # Calculate basic form score for live feedback (only when no recent rep analysis)
         faults, current_angles = self.analyze_form_improved(landmarks)
@@ -487,18 +465,13 @@ class PoseProcessor:
         if (hasattr(self, 'last_rep_analysis') and self.last_rep_analysis and 
             'timestamp' in self.last_rep_analysis and 
             time.time() - self.last_rep_analysis['timestamp'] > 10):
-            print("[DEBUG] Clearing old rep analysis - starting fresh")
             self.last_rep_analysis = None
         
         # Use the most recent rep analysis score if available, otherwise calculate live score
         if hasattr(self, 'last_rep_analysis') and self.last_rep_analysis:
             live_form_score = self.last_rep_analysis.get('score', 100)
-            print(f"[DEBUG] Using last rep analysis score: {live_form_score}")
         else:
             live_form_score = self.calculate_form_score(faults)
-            print(f"[DEBUG] Using calculated live score: {live_form_score}")
-        
-        print(f"[DEBUG] Form faults: {faults}, Final form score: {live_form_score}")
 
         # Store current data for legacy compatibility
         self.current_angles = current_angles
@@ -508,10 +481,15 @@ class PoseProcessor:
         # --- Data Collection ---
         # If a rep is in progress, collect data for this frame
         if rep_state.phase != 'standing' or self.current_rep_data:
-            self.current_rep_data.append(metrics)
+            # Store both metrics and raw landmarks for form grader
+            frame_data = {
+                'metrics': metrics,
+                'landmarks': landmarks,  # Raw MediaPipe landmarks for form grader
+                'timestamp': time.time()
+            }
+            self.current_rep_data.append(frame_data)
             # Clear old rep analysis when starting a new rep
             if rep_state.phase != 'standing' and not self.current_rep_data[:-1]:  # First frame of new rep
-                print("[DEBUG] Starting new rep - clearing previous analysis")
                 self.last_rep_analysis = None
 
         # --- Post-Rep Analysis Trigger ---
@@ -529,7 +507,6 @@ class PoseProcessor:
             if len(self.stability_buffer) >= 5:
                 # Scale by 1000 to make it more visible (0.001 -> 1.0)
                 stability = float(np.var(list(self.stability_buffer)) * 1000)
-                print(f"[DEBUG] Stability: {stability:.3f}")
 
         # Tempo: duration of current rep (if in progress)
         tempo = 0.0
@@ -539,7 +516,6 @@ class PoseProcessor:
             tempo = time.time() - self.phase_start_time
         else:
             self.phase_start_time = None
-        print(f"[DEBUG] Tempo: {tempo:.2f}s")
 
         # Balance: difference between left and right foot positions (X) scaled for visibility
         balance = 0.0
@@ -549,9 +525,6 @@ class PoseProcessor:
             if left_ankle and right_ankle:
                 # Scale by 100 to make it more visible (0.01 -> 1.0)
                 balance = abs(left_ankle['x'] - right_ankle['x']) * 100
-                print(f"[DEBUG] Balance: {balance:.3f}")
-            else:
-                print(f"[DEBUG] Balance: Missing ankle positions")
 
         # --- Real-time Data for UI ---
         live_results = {
@@ -968,14 +941,6 @@ class PoseProcessor:
                 # Draw text
                 cv2.putText(frame, text, (10, y_pos), 
                            cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.7, color, thickness)
-        
-        # Debug: Print current feedback to console for troubleshooting
-        if current_feedback:
-            print(f"Debug: Displaying {len(current_feedback)} feedback messages:")
-            for i, feedback in enumerate(current_feedback[:2]):
-                print(f"  {i+1}. [{feedback.category}] {feedback.message}")
-        else:
-            print("Debug: No active feedback messages")
             
         # Add a test feedback message for debugging
         if not current_feedback:
@@ -1117,9 +1082,6 @@ class PoseProcessor:
             # Clear accumulated data
             self.current_rep_data = []
             self.last_rep_analysis = None
-            
-            # Log session end
-            print("🔄 Session ended and resources cleaned up")
             
         except Exception as e:
             print(f"Warning: Error ending session: {e}")

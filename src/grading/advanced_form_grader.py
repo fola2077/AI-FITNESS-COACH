@@ -726,7 +726,7 @@ class IntelligentFormGrader:
             detector = PoseDetector()
             
             # Calculate basic angles
-            angles = detector.calculate_joint_angles(pose_landmarks)
+            angles = detector.calculate_angles(pose_landmarks)
             
             # Calculate center of mass
             com_x, com_y = detector.calculate_center_of_mass(pose_landmarks)
@@ -976,23 +976,7 @@ class IntelligentFormGrader:
             summary['visibility_quality'] = 'excellent' if avg_visibility > 0.9 else 'good' if avg_visibility > 0.7 else 'poor'
         
         return summary
-
-        
-        fault_penalties = {
-            "INSUFFICIENT_DEPTH": 25,
-            "ASYMMETRIC_MOVEMENT": 15,
-            "LATERAL_INSTABILITY": 10,
-            "FORWARD_LEAN": 15,
-            "BACK_ROUNDING": 20,
-            "KNEE_VALGUS": 20,
-            "HEEL_RISE": 10
-        }
-        
-        for fault in faults:
-            penalty = fault_penalties.get(fault, 5)
-            base_score -= penalty
-        
-        return max(0, base_score)
+    
     
     def _calculate_confidence_from_data(self, rep_data: list) -> float:
         """Calculate confidence based on data quality"""
