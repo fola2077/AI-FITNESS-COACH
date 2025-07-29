@@ -25,7 +25,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
 from enum import Enum
 from collections import deque, defaultdict
-from collections import deque, defaultdict
 
 class UserLevel(Enum):
     """User skill level enumeration for adaptive analysis"""
@@ -89,6 +88,7 @@ class UserProfile:
     """User anthropometric and performance profile for personalization"""
     user_id: str = "default"
     skill_level: UserLevel = UserLevel.BEGINNER
+    height_cm: Optional[float] = None
     
     # Anthropometric measurements (ratios for normalization)
     torso_to_leg_ratio: float = 1.0
@@ -522,13 +522,28 @@ class SymmetryAnalyzer(BaseAnalyzer):
             penalties.append({'reason': 'Asymmetric Movement', 'amount': min(20, penalty)})
         
         return {'faults': faults, 'penalties': penalties, 'bonuses': []}
+class AnthropometricNormalizer:
     """
-    Normalizes biomechanical thresholds based on individual body proportions.
+    Normalizes biomechanical thresholds and scores based on individual body proportions.
     
     This system accounts for natural anatomical variations to provide fair
     and personalized form assessment.
     """
     
+    def __init__(self):
+        self.standard_height = 175  # cm
+        self.standard_limb_ratio = 0.43
+
+    def normalize_score(self, score: float, user_height: float = None) -> float:
+        """Apply anthropometric normalization if data available"""
+        if user_height is None:
+            return score
+        
+        # Simple height-based adjustment
+        height_factor = user_height / self.standard_height
+        adjustment = 1.0 + (height_factor - 1.0) * 0.1
+        return score * adjustment
+
     @staticmethod
     def calculate_torso_leg_ratio(landmarks) -> float:
         """
@@ -602,82 +617,32 @@ class SymmetryAnalyzer(BaseAnalyzer):
         return base_threshold * adjustment_factor
 
 
-class AnthropometricNormalizer:
-    """Normalizes scores based on user's physical characteristics"""
-    
-    def __init__(self):
-        self.standard_height = 175  # cm
-        self.standard_limb_ratio = 0.43
-    
-    def normalize_score(self, score: float, user_height: float = None) -> float:
-        """Apply anthropometric normalization if data available"""
-        if user_height is None:
-            return score
-        
-        # Simple height-based adjustment
-        height_factor = user_height / self.standard_height
-        adjustment = 1.0 + (height_factor - 1.0) * 0.1
-        return score * adjustment
-
-
 class IntelligentFormGrader:
     """
     Advanced biomechanical analysis engine with modular analyzer system.
     Provides comprehensive movement quality assessment with visibility-aware analysis.
     """
     
-    def __init__(self, difficulty: str = "casual", user_profile: UserProfile = None):
-        """Initialize the intelligent form grader"""
-        self.user_profile = user_profile or UserProfile()
-        self.movement_analyzer = MovementQualityAnalyzer()
-        self.fatigue_predictor = FatiguePredictor()
-        self.normalizer = AnthropometricNormalizer()
-        self.difficulty = difficulty.lower()  # 'beginner', 'casual', 'professional'
-        self.recent_scores = deque(maxlen=10)
-        self.fault_frequency = defaultdict(int)
-        
-        # Initialize individual analyzers for modular approach
-        self.safety_analyzer = SafetyAnalyzer()
-        self.depth_analyzer = DepthAnalyzer()
-        self.stability_analyzer = StabilityAnalyzer()
-        self.tempo_analyzer = TempoAnalyzer()
-        self.symmetry_analyzer = SymmetryAnalyzer()
-        
-        # Update thresholds based on difficulty
-        self._update_difficulty_thresholds()
-    """Normalizes scores based on user's physical characteristics"""
-    
-    def __init__(self):
-        self.standard_height = 175  # cm
-        self.standard_limb_ratio = 0.43
-    
-    def normalize_score(self, score: float, user_height: float = None) -> float:
-        """Apply anthropometric normalization if data available"""
-        if user_height is None:
-            return score
-        
-        # Simple height-based adjustment
-        height_factor = user_height / self.standard_height
-        adjustment = 1.0 + (height_factor - 1.0) * 0.1
-        return score * adjustment
     def __init__(self, user_profile: UserProfile = None, difficulty: str = "beginner"):
+        """Initialize the intelligent form grader."""
         self.user_profile = user_profile or UserProfile()
         self.movement_analyzer = MovementQualityAnalyzer()
         self.fatigue_predictor = FatiguePredictor()
         self.normalizer = AnthropometricNormalizer()
-        self.difficulty = difficulty.lower()  # 'beginner', 'casual', 'professional'
         self.recent_scores = deque(maxlen=10)
         self.fault_frequency = defaultdict(int)
-        
+
         # Initialize individual analyzers for modular approach
-        self.safety_analyzer = SafetyAnalyzer()
-        self.depth_analyzer = DepthAnalyzer()
-        self.stability_analyzer = StabilityAnalyzer()
-        self.tempo_analyzer = TempoAnalyzer()
-        self.symmetry_analyzer = SymmetryAnalyzer()
-        
-        # Update thresholds based on difficulty
-        self._update_difficulty_thresholds()
+        self.analyzers = {
+            'safety': SafetyAnalyzer(),
+            'depth': DepthAnalyzer(),
+            'stability': StabilityAnalyzer(),
+            'tempo': TempoAnalyzer(),
+            'symmetry': SymmetryAnalyzer()
+        }
+
+        # Set initial difficulty
+        self.set_difficulty(difficulty)
     
     def set_difficulty(self, difficulty: str) -> None:
         """Set difficulty level with validation"""
@@ -694,113 +659,24 @@ class IntelligentFormGrader:
         """Update analyzer configurations based on difficulty level"""
         if self.difficulty == 'beginner':
             # More forgiving thresholds, focus only on safety
-            self.safety_analyzer.min_visibility_threshold = 0.6
+            self.analyzers['safety'].min_visibility_threshold = 0.6
         elif self.difficulty == 'casual':
             # Standard thresholds, include depth analysis
-            self.safety_analyzer.min_visibility_threshold = 0.7
-            self.depth_analyzer.min_visibility_threshold = 0.7
+            self.analyzers['safety'].min_visibility_threshold = 0.7
+            self.analyzers['depth'].min_visibility_threshold = 0.7
         else:  # professional
             # Strict thresholds, all analyzers active
-            for analyzer in [self.safety_analyzer, self.depth_analyzer, 
-                           self.stability_analyzer, self.tempo_analyzer, 
-                           self.symmetry_analyzer]:
+            for analyzer in self.analyzers.values():
                 analyzer.min_visibility_threshold = 0.8
     
-    def create_biomechanical_metrics(self, pose_landmarks, previous_metrics=None) -> BiomechanicalMetrics:
-        """
-        Create comprehensive biomechanical metrics from pose landmarks.
-        
-        Args:
-            pose_landmarks: MediaPipe pose landmarks
-            previous_metrics: Previous frame metrics for velocity/acceleration calculation
-            
-        Returns:
-            BiomechanicalMetrics object
-        """
-        if not pose_landmarks:
-            return BiomechanicalMetrics()
-        
-        try:
-            # Import pose detector locally to avoid circular imports
-            from ..pose.pose_detector import PoseDetector
-            detector = PoseDetector()
-            
-            # Calculate basic angles
-            angles = detector.calculate_angles(pose_landmarks)
-            
-            # Calculate center of mass
-            com_x, com_y = detector.calculate_center_of_mass(pose_landmarks)
-            
-            # Calculate landmark visibility
-            visibility = detector.calculate_landmark_visibility(pose_landmarks)
-            
-            # Calculate velocity and acceleration if previous metrics available
-            velocity = 0.0
-            acceleration = 0.0
-            jerk = 0.0
-            
-            if previous_metrics:
-                # Simple velocity calculation based on COM movement
-                dt = 1.0/30.0  # Assume 30 FPS
-                dx = com_x - previous_metrics.center_of_mass_x
-                dy = com_y - previous_metrics.center_of_mass_y
-                velocity = math.sqrt(dx*dx + dy*dy) / dt
-                
-                # Acceleration calculation
-                acceleration = (velocity - previous_metrics.movement_velocity) / dt
-                
-                # Jerk calculation
-                jerk = (acceleration - previous_metrics.acceleration) / dt
-            
-            # Calculate symmetry metrics
-            knee_symmetry = 1.0
-            if angles.get('knee_left', 0) > 0 and angles.get('knee_right', 0) > 0:
-                knee_symmetry = min(angles['knee_left'], angles['knee_right']) / max(angles['knee_left'], angles['knee_right'])
-            
-            ankle_symmetry = 1.0
-            if angles.get('ankle_left', 0) > 0 and angles.get('ankle_right', 0) > 0:
-                ankle_symmetry = min(angles['ankle_left'], angles['ankle_right']) / max(angles['ankle_left'], angles['ankle_right'])
-            
-            # Create metrics object
-            metrics = BiomechanicalMetrics(
-                knee_angle_left=angles.get('knee_left', 0),
-                knee_angle_right=angles.get('knee_right', 0),
-                hip_angle=angles.get('hip', 0),
-                back_angle=angles.get('back', 0),
-                ankle_angle_left=angles.get('ankle_left', 0),
-                ankle_angle_right=angles.get('ankle_right', 0),
-                center_of_mass_x=com_x,
-                center_of_mass_y=com_y,
-                movement_velocity=velocity,
-                acceleration=acceleration,
-                jerk=jerk,
-                knee_symmetry_ratio=knee_symmetry,
-                ankle_symmetry_ratio=ankle_symmetry,
-                weight_distribution_ratio=1.0,  # Could be calculated from foot pressure if available
-                postural_sway=abs(com_x - 0.5),  # Deviation from center
-                base_of_support_width=0.6,  # Could be calculated from foot positions
-                timestamp=time.time(),
-                phase_duration=0.1,  # Assume frame duration
-                landmark_visibility=visibility
-            )
-            
-            return metrics
-            
-        except Exception as e:
-            print(f"Error creating biomechanical metrics: {e}")
-            return BiomechanicalMetrics()
+
     
     def grade_repetition(self, frame_metrics: List[BiomechanicalMetrics]) -> dict:
         """
-        Grade a complete repetition using modular analyzer system with visibility-aware analysis.
-        
-        Args:
-            frame_metrics: List of BiomechanicalMetrics objects
-            
-        Returns:
-            Dictionary with score, faults, feedback, and detailed analysis
+        Grade a complete repetition using the modular analyzer system.
         """
         if not frame_metrics:
+            print("[FormGrader] No frame metrics provided")
             return {
                 'score': 0,
                 'faults': ['NO_DATA'],
@@ -808,45 +684,34 @@ class IntelligentFormGrader:
                 'feedback': ["No movement data available for analysis."],
                 'biomechanical_summary': {}
             }
-        
+
         print(f"[FormGrader] Analyzing {len(frame_metrics)} frames with {self.difficulty} difficulty")
         
-        # Initialize analysis results
-        all_faults = []
-        all_penalties = []
-        all_bonuses = []
+        # ADD DEBUG: Check the actual data quality
+        valid_knee_angles = [fm.knee_angle_left for fm in frame_metrics if fm.knee_angle_left > 0]
+        print(f"[FormGrader] DEBUG: {len(valid_knee_angles)} frames with valid knee angles")
+        if valid_knee_angles:
+            print(f"[FormGrader] DEBUG: Knee angle range: {min(valid_knee_angles):.1f}° - {max(valid_knee_angles):.1f}°")
+
+        all_faults, all_penalties, all_bonuses = [], [], []
         analysis_results = {}
-        
-        # Run applicable analyzers based on difficulty and visibility
-        analyzers = [
-            ('safety', self.safety_analyzer),
-            ('depth', self.depth_analyzer),
-            ('stability', self.stability_analyzer),
-            ('tempo', self.tempo_analyzer),
-            ('symmetry', self.symmetry_analyzer)
-        ]
-        
-        for analyzer_name, analyzer in analyzers:
+
+        # --- Refactored Analyzer Loop ---
+        for name, analyzer in self.analyzers.items():
             if analyzer.can_analyze(frame_metrics, self.difficulty):
                 try:
                     result = analyzer.analyze(frame_metrics)
-                    analysis_results[analyzer_name] = result
-                    
+                    analysis_results[name] = result
                     all_faults.extend(result.get('faults', []))
                     all_penalties.extend(result.get('penalties', []))
                     all_bonuses.extend(result.get('bonuses', []))
-                    
-                    print(f"[FormGrader] {analyzer_name.title()} analysis: "
-                          f"faults={result.get('faults', [])}, "
-                          f"penalties={len(result.get('penalties', []))}, "
-                          f"bonuses={len(result.get('bonuses', []))}")
-                          
+                    print(f"[FormGrader] ✅ {name.title()} analysis complete.")
                 except Exception as e:
-                    print(f"[FormGrader] Error in {analyzer_name} analyzer: {e}")
-                    continue
+                    print(f"[FormGrader] ❌ Error in {name} analyzer: {e}")
             else:
-                print(f"[FormGrader] Skipping {analyzer_name} analyzer (difficulty={self.difficulty}, visibility check failed)")
-        
+                print(f"[FormGrader] ⏭️ Skipping {name} analyzer (criteria not met).")
+        # --- End of Refactoring ---
+
         # Calculate final score
         base_score = 100.0
         
@@ -866,7 +731,14 @@ class IntelligentFormGrader:
         
         # Ensure score bounds
         final_score = max(0, min(100, int(base_score)))
-        
+
+        # --- NEW: Apply Anthropometric Normalization ---
+        if self.user_profile and hasattr(self.user_profile, 'height_cm') and self.user_profile.height_cm is not None:
+             final_score = self.normalizer.normalize_score(final_score, self.user_profile.height_cm)
+             final_score = max(0, min(100, int(final_score))) # Re-clip score after normalization
+             print(f"[FormGrader] Score after normalization: {final_score}%")
+        # --- End of New Code ---
+
         # Generate feedback based on results
         feedback = self._generate_feedback(final_score, all_faults, all_penalties, all_bonuses)
         
@@ -977,180 +849,3 @@ class IntelligentFormGrader:
         
         return summary
     
-    
-    def _calculate_confidence_from_data(self, rep_data: list) -> float:
-        """Calculate confidence based on data quality"""
-        if not rep_data:
-            return 0.0
-        
-        # Simple confidence based on data completeness
-        frame_count = len(rep_data)
-        return min(100.0, frame_count * 2)  # Assume 50 frames = 100% confidence
-    
-    def _get_recommendations(self, faults: set) -> list:
-        """Get coaching recommendations based on faults"""
-        recommendations = []
-        fault_recommendations = {
-            "INSUFFICIENT_DEPTH": "Focus on going deeper - sit back and down until thighs are parallel to floor",
-            "ASYMMETRIC_MOVEMENT": "Keep movement balanced - check for strength imbalances between sides",
-            "LATERAL_INSTABILITY": "Improve core stability - engage your core throughout the movement",
-            "FORWARD_LEAN": "Keep chest up and back straight - avoid leaning forward excessively",
-            "BACK_ROUNDING": "Maintain neutral spine - avoid rounding your back under load",
-            "KNEE_VALGUS": "Track knees over toes - strengthen glutes and improve hip mobility",
-            "HEEL_RISE": "Keep feet flat on ground throughout the movement"
-        }
-        
-        for fault in faults:
-            if fault in fault_recommendations:
-                recommendations.append(fault_recommendations[fault])
-        
-        if not recommendations:
-            recommendations.append("Great form! Keep up the excellent work.")
-        
-        return recommendations[:3]  # Limit to top 3 recommendations
-
-    def _generate_coaching_cues(self, faults: List[Dict], positive_aspects: List[Dict]) -> List[str]:
-        """
-        Generate specific, actionable coaching cues based on detected patterns.
-        
-        Args:
-            faults: List of detected faults
-            positive_aspects: List of positive aspects
-            
-        Returns:
-            List of coaching cues
-        """
-        cues = []
-        fault_types = [f['type'] for f in faults]
-        
-        if 'BACK_ROUNDING' in fault_types:
-            cues.append("Keep your chest up and maintain a neutral spine throughout the movement.")
-        
-        if 'KNEE_VALGUS' in fault_types:
-            cues.append("Focus on pushing your knees out in line with your toes.")
-        
-        if 'INSUFFICIENT_DEPTH' in fault_types:
-            cues.append("Aim to lower until your hip crease is just below your knee cap.")
-        
-        if 'FORWARD_LEAN' in fault_types:
-            cues.append("Keep your torso more upright by engaging your core and driving through your heels.")
-        
-        # Add positive reinforcement cues
-        positive_types = [p['type'] for p in positive_aspects]
-        if 'SMOOTH_MOVEMENT' in positive_types:
-            cues.append("Excellent control! Your smooth movement pattern is reducing injury risk.")
-        
-        if 'EXCELLENT_DEPTH' in positive_types:
-            cues.append("Outstanding depth! This maximizes muscle activation and mobility benefits.")
-        
-        return cues[:3]  # Return max 3 cues to avoid information overload
-    
-    def _generate_overall_assessment(self, score: float, faults: List[Dict], positive_aspects: List[Dict]) -> str:
-        """
-        Generate an overall assessment narrative for the repetition.
-        
-        Args:
-            score: Final score for the repetition
-            faults: List of detected faults
-            positive_aspects: List of positive aspects
-            
-        Returns:
-            Overall assessment string
-        """
-        if score >= 90:
-            return "Exceptional technique demonstrated. This rep showcases excellent movement quality and safety."
-        elif score >= 80:
-            return "Strong performance with minor areas for refinement. Form is safe and effective."
-        elif score >= 70:
-            return "Good foundation with some technical issues to address. Focus on highlighted areas."
-        elif score >= 60:
-            return "Acceptable form but several improvement opportunities. Prioritize safety and consistency."
-        else:
-            return "Significant form issues detected. Consider form practice with lighter weight or bodyweight."
-    
-    def _calculate_confidence(self, rep_data: RepetitionData) -> float:
-        """
-        Calculate confidence level in the analysis based on data quality.
-        
-        Args:
-            rep_data: Repetition data to assess
-            
-        Returns:
-            Confidence score (0-100)
-        """
-        if not rep_data.frame_metrics:
-            return 0.0
-        
-        # Factors affecting confidence
-        factors = []
-        
-        # 1. Number of frames (more frames = higher confidence)
-        frame_count = len(rep_data.frame_metrics)
-        frame_confidence = min(100, frame_count * 2)  # Assume 50 frames = 100% confidence
-        factors.append(frame_confidence)
-        
-        # 2. Movement completion (full phase cycle = higher confidence)
-        phases_detected = len(rep_data.phase_transitions)
-        phase_confidence = min(100, phases_detected * 25)  # 4 phases = 100% confidence
-        factors.append(phase_confidence)
-        
-        # 3. Data consistency (consistent measurements = higher confidence)
-        if frame_count > 5:
-            valid_hip_angles = [m.hip_angle for m in rep_data.frame_metrics if m.hip_angle > 0]
-            if valid_hip_angles:
-                angle_std = np.std(valid_hip_angles)
-                consistency_confidence = max(0, 100 - angle_std)  # Lower std = higher confidence
-                factors.append(consistency_confidence)
-            else:
-                factors.append(50)
-        else:
-            factors.append(50)  # Neutral confidence for insufficient data
-        
-        # 4. Landmark visibility
-        if rep_data.frame_metrics:
-            avg_visibility = np.mean([m.landmark_visibility for m in rep_data.frame_metrics])
-            visibility_confidence = avg_visibility * 100
-            factors.append(visibility_confidence)
-        
-        return np.mean(factors)
-    
-    def _get_fault_description(self, fault_type: str, severity: FaultSeverity, measured_value: float) -> str:
-        """
-        Generate human-readable fault descriptions.
-        
-        Args:
-            fault_type: Type of fault detected
-            severity: Severity level of the fault
-            measured_value: Actual measured value
-            
-        Returns:
-            Human-readable fault description
-        """
-        descriptions = {
-            'BACK_ROUNDING': {
-                FaultSeverity.MINOR: f"Slight back rounding detected ({measured_value:.1f}°). Keep chest up.",
-                FaultSeverity.MODERATE: f"Moderate back rounding ({measured_value:.1f}°). Focus on neutral spine.",
-                FaultSeverity.MAJOR: f"Significant back rounding ({measured_value:.1f}°). Reduce weight and focus on form.",
-                FaultSeverity.CRITICAL: f"Dangerous back rounding ({measured_value:.1f}°). Stop and reset form."
-            },
-            'KNEE_VALGUS': {
-                FaultSeverity.MINOR: f"Minor knee cave detected ({measured_value:.1f}°). Push knees out.",
-                FaultSeverity.MODERATE: f"Moderate knee valgus ({measured_value:.1f}°). Focus on knee tracking.",
-                FaultSeverity.MAJOR: f"Significant knee collapse ({measured_value:.1f}°). Strengthen glutes.",
-                FaultSeverity.CRITICAL: f"Severe knee valgus ({measured_value:.1f}°). Risk of injury - reduce load."
-            },
-            'INSUFFICIENT_DEPTH': {
-                FaultSeverity.MINOR: f"Slightly shallow squat ({measured_value:.1f}°). Aim for a bit deeper.",
-                FaultSeverity.MODERATE: f"Moderate depth issue ({measured_value:.1f}°). Work on mobility.",
-                FaultSeverity.MAJOR: f"Insufficient depth ({measured_value:.1f}°). Focus on hip and ankle mobility.",
-                FaultSeverity.CRITICAL: f"Very shallow squat ({measured_value:.1f}°). Practice bodyweight squats first."
-            },
-            'FORWARD_LEAN': {
-                FaultSeverity.MINOR: f"Slight forward lean ({measured_value:.1f}°). Engage core more.",
-                FaultSeverity.MODERATE: f"Moderate forward lean ({measured_value:.1f}°). Keep chest up.",
-                FaultSeverity.MAJOR: f"Excessive forward lean ({measured_value:.1f}°). Work on ankle mobility.",
-                FaultSeverity.CRITICAL: f"Dangerous forward lean ({measured_value:.1f}°). Risk of falling - reset form."
-            }
-        }
-        
-        return descriptions.get(fault_type, {}).get(severity, f"Unspecified {fault_type} issue detected.")

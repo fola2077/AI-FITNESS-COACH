@@ -1,7 +1,7 @@
 import cv2, time, pathlib
-from pose.pose_detector import PoseDetector
-from preprocess.one_euro import OneEuroFilter
-from utils.math_utils import joint_angle
+from src.pose.pose_detector import PoseDetector
+from src.preprocess.one_euro import OneEuroFilter
+from src.utils.math_utils import joint_angle
 
 def run_on_video(path, max_frames=None):
     cap = cv2.VideoCapture(str(path))

@@ -1,21 +1,19 @@
-# ai_fitness_coach/src/processing/pose_processor.py
 import cv2
 import numpy as np
 import time
+import math
 from collections import deque
 from src.pose.pose_detector import PoseDetector
 from src.utils.math_utils import joint_angle
 from src.feedback.feedback_manager import FeedbackManager
 from src.grading.advanced_form_grader import (
-    IntelligentFormGrader, 
-    UserProfile, 
-    UserLevel, 
-    BiomechanicalMetrics, 
-    RepetitionData, 
-    MovementPhase
+    IntelligentFormGrader,
+    UserProfile,
+    UserLevel,
+    BiomechanicalMetrics
 )
 from src.gui.widgets.session_report import SessionManager
-from src.utils.rep_counter import RepCounter
+from src.utils.rep_counter import RepCounter, MovementPhase
 from enum import Enum
 
 class SessionState(Enum):
@@ -29,230 +27,85 @@ class PoseProcessor:
     def __init__(self, user_profile: UserProfile = None):
         self.pose_detector = PoseDetector()
         self.feedback_manager = FeedbackManager()
-        
-        # Initialize advanced form grader
-        self.user_profile = user_profile or UserProfile(
-            user_id="default_user",
-            skill_level=UserLevel.INTERMEDIATE
-        )
-        self.form_grader = IntelligentFormGrader(self.user_profile)
-        
-        # Initialize session manager
         self.session_manager = SessionManager()
-        
-        # Initialize intelligent rep counter
         self.rep_counter = RepCounter(exercise_type="squat")
-        
-        # Enhanced State Management
-        self.session_state = SessionState.STOPPED
-        self.phase = MovementPhase.STANDING
-        self.previous_phase = MovementPhase.STANDING
-        self.feedback_log = []
-        
-        # Current pose results (for drawing)
-        self.current_pose_results = None
-        
-        # Calibration system
-        self.calibration_frames = 0
-        self.stability_buffer = deque(maxlen=30)  # 1 second at 30fps
-        self.pose_stable_threshold = 0.05  # COM movement threshold for stability
-        
-        # Current repetition tracking
-        self.current_rep_data = []  # Initialize as empty list
-        self.current_rep_metrics = []
-        self.last_rep_analysis = {} # To store the analysis of the last completed rep
-        self.rep_start_time = 0.0
-        self.phase_start_time = None  # For tempo calculation
-        self.phase_transitions = []
-        self.previous_metrics = None
-        
-        # Legacy compatibility (for existing code)
-        self.back_angle_buffer = deque(maxlen=5)
-        self.back_rounding_frames = 0
-        self.current_angles = {}
-        self.current_faults = []
-        self.form_score = 100
-        self.hit_bottom_this_rep = False
 
-        # FPS calculation
-        self.start_time = time.time()
-        self.frame_counter = 0
-        self.fps = 0
-        
-        # Enhanced settings
+        self.user_profile = user_profile or UserProfile(user_id="default_user", skill_level=UserLevel.INTERMEDIATE)
+        self.form_grader = IntelligentFormGrader(self.user_profile)
+
         self.settings = {
             'show_skeleton': True,
             'show_angles': True,
             'confidence_threshold': 0.7,
-            'back_angle_threshold': 25,
-            'knee_depth_threshold': 90,
-            'smoothing_frames': 5,
-            'calibration_required_frames': 90,  # 3 seconds at 30fps
-            'enable_advanced_grading': True,
-            'source_type': 'webcam'  # 'webcam' or 'video'
+            'calibration_required_frames': 90,
         }
+        self.reset()
 
     def reset(self):
         """Resets the processor for a new session."""
-        self.rep_counter.reset()  # Use RepCounter's reset method
-        self.phase = MovementPhase.STANDING
-        self.previous_phase = MovementPhase.STANDING
-        self.feedback_log = []
-        self.start_time = time.time()
-        self.frame_counter = 0
-        
-        # Reset advanced tracking
-        self.session_state = SessionState.STOPPED
-        self.calibration_frames = 0
-        self.stability_buffer.clear()
-        self.current_rep_data = []  # Initialize as empty list
-        self.current_rep_metrics = []
-        self.rep_start_time = 0.0
-        self.phase_transitions = []
-        self.previous_metrics = None
-        
-        # Reset legacy fields
-        self.back_angle_buffer.clear()
-        self.back_rounding_frames = 0
-        self.current_angles = {}
-        self.current_faults = []
-        self.form_score = 100
-        self.hit_bottom_this_rep = False
-    
-    def start_session(self, source_type='webcam'):
-        """
-        Start a new analysis session.
-        
-        Args:
-            source_type: 'webcam' for live analysis, 'video' for pre-recorded analysis
-        """
-        print("🚀 Starting new session...")
-        
-        # Reset everything
-        self.reset()
-        
-        # Initialize session manager
+        print("🔄 Processor reset for new session.")
+        self.rep_counter.reset()
         self.session_manager.reset_session()
+        self.session_state = SessionState.STOPPED
+        self.current_rep_metrics = []
+        self.last_rep_analysis = {}
+        self.previous_metrics = None
+        self.frame_counter = 0
+        self.fps = 0
+        self.start_time = time.time()
+        self.stability_buffer = deque(maxlen=30)
+        self.calibration_frames = 0
+
+    def start_session(self, source_type='webcam'):
+        """Starts a new analysis session."""
+        print("🚀 Starting new session...")
+        self.reset()
         self.session_manager.start_session()
-        
-        self.settings['source_type'] = source_type
-        
         if source_type == 'webcam':
             self.session_state = SessionState.CALIBRATING
             print("✅ Session started - Beginning calibration...")
         else:
             self.session_state = SessionState.ACTIVE
             print("✅ Session started - Video analysis mode")
-    
-    def _check_pose_stability(self, landmarks):
-        """
-        Check if the user's pose is stable for calibration.
-        
-        Args:
-            landmarks: MediaPipe pose landmarks
-            
-        Returns:
-            True if pose is stable, False otherwise
-        """
-        if not landmarks:
-            return False
-        
-        # Calculate center of mass
-        com_x, com_y = self.pose_detector.calculate_center_of_mass(landmarks)
-        self.stability_buffer.append((com_x, com_y))
-        
-        if len(self.stability_buffer) < 10:
-            return False
-        
-        # Check if COM has remained relatively stable
-        recent_positions = list(self.stability_buffer)[-10:]
-        x_positions = [pos[0] for pos in recent_positions]
-        y_positions = [pos[1] for pos in recent_positions]
-        
-        x_variance = np.var(x_positions)
-        y_variance = np.var(y_positions)
-        
-        # Pose is stable if both variances are below threshold
-        return x_variance < self.pose_stable_threshold and y_variance < self.pose_stable_threshold
-    
-    def _detect_movement_phase(self, landmarks):
-        """
-        Enhanced phase detection with better transition logic.
-        
-        Args:
-            landmarks: MediaPipe pose landmarks
-            
-        Returns:
-            Detected movement phase
-        """
-        if not landmarks:
-            return self.phase
-        
-        # Calculate joint angles
-        angles = self.pose_detector.calculate_joint_angles(landmarks)
-        
-        if not angles:
-            return self.phase
-        
-        # Get key angles
-        hip_angle = angles.get('hip', 180)
-        knee_angle = (angles.get('knee_left', 180) + angles.get('knee_right', 180)) / 2
-        
-        # Phase detection logic
-        is_standing = hip_angle > 160 and knee_angle > 160
-        is_at_bottom = hip_angle < 100 and knee_angle < 100
-        is_descending = hip_angle < 140 and knee_angle < 140 and not is_at_bottom
-        
-        prev_phase = self.phase
-        
-        if prev_phase == MovementPhase.STANDING and is_descending:
-            self.phase = MovementPhase.DESCENT
-            self._start_new_rep()
-        elif prev_phase == MovementPhase.DESCENT:
-            if is_at_bottom:
-                self.phase = MovementPhase.BOTTOM
-                self.hit_bottom_this_rep = True
-            elif is_standing:
-                # User gave up mid-descent - let RepCounter handle this
-                self.phase = MovementPhase.STANDING
-        elif prev_phase == MovementPhase.BOTTOM and not is_at_bottom:
-            self.phase = MovementPhase.ASCENT
-        elif prev_phase == MovementPhase.ASCENT and is_standing:
-            self.phase = MovementPhase.STANDING
-            # Rep completion will be handled by RepCounter
-        
-        # Log phase transition
-        if prev_phase != self.phase:
-            self.phase_transitions.append((self.phase, time.time()))
-        
-        return self.phase
-    
-    def _start_new_rep(self):
-        """Start tracking a new repetition."""
-        self.rep_start_time = time.time()
-        self.current_rep_metrics = []
-        self.phase_transitions = [(MovementPhase.DESCENT, self.rep_start_time)]
-        self.hit_bottom_this_rep = False
-    
+
+    def end_session(self):
+        """Ends the current session."""
+        print("🛑 Ending session.")
+        self.session_state = SessionState.STOPPED
+        self.session_manager.end_session()
+        # Return session summary instead of calling non-existent method
+        return self.session_manager.get_session_summary()
+
     def process_frame(self, frame):
-        """
-        Enhanced frame processing with advanced biomechanical analysis.
-        
-        Args:
-            frame: Input video frame
-            
-        Returns:
-            Dictionary containing analysis results and metrics
-        """
-        # Validate input frame
+        """Processes a single video frame for pose analysis."""
         if frame is None or frame.size == 0:
-            print("❌ Invalid frame provided to pose processor")
-            return self._get_basic_metrics(frame)
-        
-        # Create a copy of the frame for drawing landmarks
+            print("❌ Invalid frame provided.")
+            return self._get_error_metrics(frame, "Invalid Frame")
+
         display_frame = frame.copy()
+        self._calculate_fps()
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pose_results = self.pose_detector.process_frame(frame_rgb)
+
+        if not pose_results or not pose_results.pose_landmarks:
+            return self._get_error_metrics(display_frame, "No Pose Detected")
         
-        # 1. FPS Calculation
+        self.pose_detector.results = pose_results
+        self.pose_detector.draw_landmarks(display_frame)
+        
+        landmarks = pose_results.pose_landmarks.landmark
+
+        if self.session_state == SessionState.CALIBRATING:
+            return self._handle_calibration(landmarks, display_frame)
+        
+        if self.session_state == SessionState.ACTIVE:
+            return self._handle_active_analysis(landmarks, display_frame)
+
+        return self._get_error_metrics(display_frame, f"Unhandled State: {self.session_state.value}")
+
+    def _calculate_fps(self):
+        """Calculates the frames per second."""
         self.frame_counter += 1
         elapsed_time = time.time() - self.start_time
         if elapsed_time > 1:
@@ -260,828 +113,152 @@ class PoseProcessor:
             self.frame_counter = 0
             self.start_time = time.time()
 
-        # 2. Pose Detection - convert to RGB since MediaPipe expects RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # Log frame details for debugging
-        # Process the frame with MediaPipe
-        pose_results = self.pose_detector.process_frame(frame_rgb)
-        self.current_pose_results = pose_results  # Store for drawing
-
-        # Draw landmarks on the frame if pose is detected
-        if pose_results and pose_results.pose_landmarks:
-            # Update the pose detector's results and draw landmarks
-            self.pose_detector.results = pose_results
-            self.pose_detector.draw_landmarks(display_frame)
+    def _convert_landmarks_to_metrics(self, landmarks, previous_metrics):
+        """Converts raw MediaPipe landmarks to a BiomechanicalMetrics object."""
+        # This function encapsulates the logic we removed from the form grader
+        try:
+            angles = self.pose_detector.calculate_angles(landmarks)
+            com_x, com_y = self.pose_detector.calculate_center_of_mass(landmarks)
+            visibility = self.pose_detector.calculate_landmark_visibility(landmarks)
             
-        # 3. State Management
-        if self.session_state == SessionState.STOPPED:
-            return self._get_basic_metrics(display_frame)
-        
-        if not pose_results or not pose_results.pose_landmarks:
-            return self._get_basic_metrics(display_frame)
-        
-        landmarks = pose_results.pose_landmarks.landmark
-        
-        # 4. Handle Calibration State
-        if self.session_state == SessionState.CALIBRATING:
-            return self._handle_calibration(landmarks, display_frame)
-        
-        # 5. Active Analysis
-        if self.session_state == SessionState.ACTIVE:
-            return self._handle_active_analysis(landmarks, display_frame)
-        
-        return self._get_basic_metrics(display_frame)
+            velocity, acceleration, jerk = 0.0, 0.0, 0.0
+            dt = 1.0 / (self.fps if self.fps > 0 else 30.0)
+
+            if previous_metrics:
+                dx = com_x - previous_metrics.center_of_mass_x
+                dy = com_y - previous_metrics.center_of_mass_y
+                velocity = math.sqrt(dx**2 + dy**2) / dt
+                acceleration = (velocity - previous_metrics.movement_velocity) / dt
+                jerk = (acceleration - previous_metrics.acceleration) / dt
+
+            # FIX: Add validation to ensure we have valid angle data
+            if not angles or all(angle == 0 for angle in angles.values()):
+                print("⚠️ Warning: No valid angles calculated from landmarks")
+                return None  # Return None instead of default metrics
+
+            return BiomechanicalMetrics(
+                knee_angle_left=angles.get('knee_left', 0),
+                knee_angle_right=angles.get('knee_right', 0),
+                hip_angle=angles.get('hip', 0),
+                back_angle=angles.get('back', 0),
+                center_of_mass_x=com_x,
+                center_of_mass_y=com_y,
+                movement_velocity=velocity,
+                acceleration=acceleration,
+                jerk=jerk,
+                timestamp=time.time(),
+                landmark_visibility=visibility
+            )
+        except Exception as e:
+            print(f"Error creating biomechanical metrics: {e}")
+            return None  # Return None on error instead of default object
+
+    def _handle_active_analysis(self, landmarks, frame):
+        """Handles analysis during an active session."""
+        angles = self.pose_detector.calculate_angles(landmarks)
+        rep_state = self.rep_counter.update(angles)
+
+        # Collect metrics for the current rep - SKIP invalid metrics
+        if rep_state.phase != MovementPhase.STANDING or self.current_rep_metrics:
+            current_metric = self._convert_landmarks_to_metrics(landmarks, self.previous_metrics)
+            if current_metric is not None:  # Only add valid metrics
+                self.current_rep_metrics.append(current_metric)
+                self.previous_metrics = current_metric
+
+        # When a rep is completed, trigger the full analysis
+        if rep_state.rep_completed:
+            self._process_completed_rep()
+            self.current_rep_metrics = []
+            self.previous_metrics = None
+
+        # Prepare live data for the UI
+        live_results = {
+            'rep_count': self.rep_counter.rep_count,
+            'phase': rep_state.phase,  # phase is already a string, no need for .value
+            'fps': self.fps,
+            'session_state': self.session_state.value,
+            'landmarks_detected': True,
+            'processed_frame': frame,
+            'last_rep_analysis': self.last_rep_analysis
+        }
+        return live_results
 
     def _process_completed_rep(self):
         """
-        Processes the collected data for a completed repetition and updates session analytics.
+        Processes a completed repetition by converting landmarks to metrics
+        and sending them to the form grader.
         """
-        print(f"🔄 Processing completed rep {self.rep_counter.rep_count}")
-        
-        # Always update session manager with rep count, even without analysis data
-        if self.session_manager:
-            self.session_manager.update_session(
-                rep_count=self.rep_counter.rep_count,
-                form_score=self.form_score,  # Use current form score as fallback
-                fault_data=[],
-                phase=self.phase.value if hasattr(self.phase, 'value') else str(self.phase),
-                feedback_history=[{
-                    'timestamp': time.time(),
-                    'message': f'Rep {self.rep_counter.rep_count} completed',
-                    'category': 'form'
-                }]
-            )
-
-        # Try to perform detailed analysis if we have rep data
-        if not self.current_rep_data:
-            return
-
         try:
-            # Convert collected frame data to BiomechanicalMetrics objects for form grader
-            biomechanical_metrics_list = []
-            previous_metrics = None
-            
-            for i, frame_data in enumerate(self.current_rep_data):
-                landmarks = frame_data['landmarks']
-                metrics_obj = self.form_grader.create_biomechanical_metrics(landmarks, previous_metrics)
-                biomechanical_metrics_list.append(metrics_obj)
-                previous_metrics = metrics_obj
-                
-                # Debug: check the type of the metrics object
-                if i == 0:  # Only check first frame to avoid spam
-                    print(f"[DEBUG] Created metrics object type: {type(metrics_obj)}")
-                    print(f"[DEBUG] Has landmark_visibility: {hasattr(metrics_obj, 'landmark_visibility')}")
-            
-            # Perform the advanced grading on the converted data
-            analysis_results = self.form_grader.grade_repetition(biomechanical_metrics_list)
+            if not self.current_rep_metrics:
+                print("⚠️ Rep completed with no landmark data.")
+                return
 
-            # Store the detailed analysis to be picked up by the UI
-            self.last_rep_analysis = analysis_results
-            # Add timestamp to know when this analysis was created
+            frame_metrics = self.current_rep_metrics
+            print(f"🔄 Processing completed rep {self.rep_counter.rep_count} with {len(frame_metrics)} metrics.")
+            
+            # Grade the repetition
+            self.last_rep_analysis = self.form_grader.grade_repetition(frame_metrics)
+            
+            # Add timestamp for UI tracking
             self.last_rep_analysis['timestamp'] = time.time()
-
-            # Extract score and faults for session analytics
-            score = analysis_results.get('score', 0)
-            faults = analysis_results.get('faults', [])
-            feedback = analysis_results.get('feedback', [])
-            biomechanical_summary = analysis_results.get('biomechanical_summary', {})
-
-            print(f"✅ Rep {self.rep_counter.rep_count} analyzed - Score: {score}%")            # Update session manager again with detailed analysis
-            if self.session_manager:
+            
+            # Update session manager with the analysis
+            if hasattr(self, 'session_manager'):
                 self.session_manager.update_session(
                     rep_count=self.rep_counter.rep_count,
-                    form_score=score,
-                    fault_data=faults,
-                    phase=self.phase.value if hasattr(self.phase, 'value') else str(self.phase),
-                    biomechanical_metrics=biomechanical_summary,
-                    feedback_history=[{
-                        'timestamp': time.time(),
-                        'message': feedback[0] if feedback else f'Rep {self.rep_counter.rep_count} completed with {score}% form score',
-                        'category': 'form'
-                    }]
+                    form_score=self.last_rep_analysis.get('score', 0),
+                    phase='COMPLETED',
+                    fault_data=self.last_rep_analysis.get('faults', [])
                 )
 
         except Exception as e:
             print(f"⚠️ Error in rep analysis: {e}")
-            
-        # Clear the accumulator for the next rep
-        self.current_rep_data = []
-    
-    def _get_basic_metrics(self, frame=None):
-        """Return basic metrics when no pose is detected or session is stopped."""
-        return {
-            'reps': self.rep_counter.rep_count,
-            'rep_count': self.rep_counter.rep_count,  # Add both for compatibility
-            'phase': self.phase.value if hasattr(self.phase, 'value') else str(self.phase),
-            'form_score': self.form_score,
-            'fps': self.fps,
-            'session_state': self.session_state.value,
-            'landmarks_detected': False,
-            'faults': [],
-            'feedback': [],
-            'processed_frame': frame,  # Include the frame for display
-            'last_rep_analysis': getattr(self, 'last_rep_analysis', None)
-        }
-    
-    def _handle_calibration(self, landmarks, frame):
-        """
-        Handle calibration state - ensure user is in stable position.
+            self.last_rep_analysis = {
+                'score': 0, 
+                'feedback': ['Analysis failed.'],
+                'timestamp': time.time()
+            }
         
-        Args:
-            landmarks: MediaPipe pose landmarks
-            frame: Current frame for overlay
-            
-        Returns:
-            Calibration status and metrics
-        """
-        is_stable = self._check_pose_stability(landmarks)
+
+    def _handle_calibration(self, landmarks, frame):
+        """Handles the calibration phase."""
+        com_x, com_y = self.pose_detector.calculate_center_of_mass(landmarks)
+        self.stability_buffer.append((com_x, com_y))
+        
+        is_stable = False
+        if len(self.stability_buffer) == self.stability_buffer.maxlen:
+            x_var = np.var([pos[0] for pos in self.stability_buffer])
+            y_var = np.var([pos[1] for pos in self.stability_buffer])
+            if x_var < 0.0001 and y_var < 0.0001:
+                is_stable = True
         
         if is_stable:
             self.calibration_frames += 1
         else:
-            self.calibration_frames = 0  # Reset if pose becomes unstable
-        
-        # Calculate anthropometric ratio during calibration
-        if self.calibration_frames == 30:  # Update ratio partway through calibration
-            torso_leg_ratio = self.form_grader.normalizer.calculate_torso_leg_ratio(landmarks)
-            self.user_profile.torso_to_leg_ratio = torso_leg_ratio
-        
-        # Complete calibration
-        if self.calibration_frames >= self.settings['calibration_required_frames']:
+            self.calibration_frames = 0 # Reset if unstable
+
+        progress = self.calibration_frames / self.settings['calibration_required_frames']
+
+        if progress >= 1.0:
+            print("✅ Calibration Complete!")
             self.session_state = SessionState.ACTIVE
-            return {
-                'reps': self.rep_counter.rep_count,
-                'rep_count': self.rep_counter.rep_count,
-                'phase': 'READY',
-                'form_score': 100,
-                'fps': self.fps,
-                'session_state': self.session_state.value,
-                'landmarks_detected': True,
-                'calibration_complete': True,
-                'faults': [],
-                'feedback': ["Ready to start! Begin your first squat."],
-                'processed_frame': frame,
-                'last_rep_analysis': getattr(self, 'last_rep_analysis', None)
-            }
-        
-        # Still calibrating
-        remaining_frames = self.settings['calibration_required_frames'] - self.calibration_frames
-        countdown_seconds = remaining_frames / 30.0
-        
+            feedback = ["Ready to start! Begin your first squat."]
+        else:
+            feedback = [f"Hold steady... {int(progress * 100)}%" if is_stable else "Please stand still."]
+
         return {
-            'reps': self.rep_counter.rep_count,
-            'rep_count': self.rep_counter.rep_count,
-            'phase': 'CALIBRATING',
-            'form_score': 100,
-            'fps': self.fps,
-            'session_state': self.session_state.value,
-            'landmarks_detected': True,
-            'calibration_progress': self.calibration_frames / self.settings['calibration_required_frames'],
-            'calibration_countdown': countdown_seconds,
-            'is_stable': is_stable,
-            'faults': [],
-            'feedback': [f"Hold steady position... {countdown_seconds:.1f}s" if is_stable else "Please stand still in view"],
-            'processed_frame': frame,
-            'last_rep_analysis': getattr(self, 'last_rep_analysis', None)
+            'rep_count': 0, 'phase': 'CALIBRATING', 'fps': self.fps,
+            'session_state': self.session_state.value, 'landmarks_detected': True,
+            'processed_frame': frame, 'feedback': feedback, 'last_rep_analysis': {}
         }
-    
-    def _handle_active_analysis(self, landmarks, frame):
-        """
-        Handles real-time analysis during an active session.
-        Focuses on lightweight phase detection and data collection.
-        """
-        # Calculate basic metrics needed for phase detection
-        metrics = self.pose_detector.get_all_metrics(landmarks, frame.shape)
-        angles = metrics.get('angles', {})
 
-        # Update rep counter and phase using the RepCounter object
-        rep_state = self.rep_counter.update(angles)
-
-        # Calculate basic form score for live feedback (only when no recent rep analysis)
-        faults, current_angles = self.analyze_form_improved(landmarks)
-        
-        # Clear old rep analysis after 10 seconds to allow fresh scoring
-        if (hasattr(self, 'last_rep_analysis') and self.last_rep_analysis and 
-            'timestamp' in self.last_rep_analysis and 
-            time.time() - self.last_rep_analysis['timestamp'] > 10):
-            self.last_rep_analysis = None
-        
-        # Use the most recent rep analysis score if available, otherwise calculate live score
-        if hasattr(self, 'last_rep_analysis') and self.last_rep_analysis:
-            live_form_score = self.last_rep_analysis.get('score', 100)
-        else:
-            live_form_score = self.calculate_form_score(faults)
-
-        # Store current data for legacy compatibility
-        self.current_angles = current_angles
-        self.current_faults = faults
-        self.form_score = live_form_score
-
-        # --- Data Collection ---
-        # If a rep is in progress, collect data for this frame
-        if rep_state.phase != 'standing' or self.current_rep_data:
-            # Store both metrics and raw landmarks for form grader
-            frame_data = {
-                'metrics': metrics,
-                'landmarks': landmarks,  # Raw MediaPipe landmarks for form grader
-                'timestamp': time.time()
-            }
-            self.current_rep_data.append(frame_data)
-            # Clear old rep analysis when starting a new rep
-            if rep_state.phase != 'standing' and not self.current_rep_data[:-1]:  # First frame of new rep
-                self.last_rep_analysis = None
-
-        # --- Post-Rep Analysis Trigger ---
-        # Check if a rep was just completed
-        if rep_state.rep_completed:
-            self._process_completed_rep() # Trigger the heavy analysis
-            # The analysis result is now in self.last_rep_analysis
-
-        # --- Advanced Metrics Calculation ---
-        # Stability: variance of center of mass X over last 10 frames (scaled for visibility)
-        stability = 0.0
-        if 'positions' in metrics and 'center_of_mass' in metrics['positions']:
-            com_x = metrics['positions']['center_of_mass']['x']
-            self.stability_buffer.append(com_x)
-            if len(self.stability_buffer) >= 5:
-                # Scale by 1000 to make it more visible (0.001 -> 1.0)
-                stability = float(np.var(list(self.stability_buffer)) * 1000)
-
-        # Tempo: duration of current rep (if in progress)
-        tempo = 0.0
-        if rep_state.phase != 'standing':
-            if not hasattr(self, 'phase_start_time') or not self.phase_start_time:
-                self.phase_start_time = time.time()
-            tempo = time.time() - self.phase_start_time
-        else:
-            self.phase_start_time = None
-
-        # Balance: difference between left and right foot positions (X) scaled for visibility
-        balance = 0.0
-        if 'positions' in metrics:
-            left_ankle = metrics['positions'].get('left_ankle', None)
-            right_ankle = metrics['positions'].get('right_ankle', None)
-            if left_ankle and right_ankle:
-                # Scale by 100 to make it more visible (0.01 -> 1.0)
-                balance = abs(left_ankle['x'] - right_ankle['x']) * 100
-
-        # --- Real-time Data for UI ---
-        live_results = {
-            'pose_found': True,
-            'landmarks': landmarks,
-            'reps': self.rep_counter.rep_count,
-            'rep_count': self.rep_counter.rep_count,
-            'phase': rep_state.phase,
-            'form_score': live_form_score,  # Use calculated live score
-            'angles': current_angles,       # Include angles for UI
-            'fps': self.fps,
-            'session_state': self.session_state.value,
-            'landmarks_detected': True,
-            'faults': faults,               # Include current faults
-            'feedback': [],
-            'processed_frame': frame, # The frame with basic overlays
-            'last_rep_analysis': getattr(self, 'last_rep_analysis', None), # Analysis of the *previous* rep
-            'stability': stability,
-            'tempo': tempo,
-            'balance': balance
-        }
-        return live_results
-
-    def process_frame_legacy(self, frame):
-        """
-        Legacy frame processing method for backward compatibility.
-        
-        This method maintains the original interface for existing code.
-        """
-        # Process frame with new method
-        result = self.process_frame(frame)
-        
-        # Convert to legacy format
-        metrics = {
-            'fps': result.get('fps', 0),
-            'reps': result.get('reps', 0),
-            'phase': result.get('phase', 'STANDING'),
-            'form_score': result.get('form_score', 100)
-        }
-        
-        if 'angles' in result:
-            metrics.update(result['angles'])
-        
-        faults = result.get('faults', [])
-        
-        # Draw overlays
-        annotated_frame = self.draw_overlays_improved(frame.copy(), metrics, faults, None)
-        
-        return annotated_frame, metrics, faults
-
-    def analyze_form_improved(self, landmarks):
-        """Improved form analysis with better thresholds and smoothing"""
-        faults = []
-        angles = {}
-        
-        try:
-            # Get landmarks for calculations
-            left_shoulder = landmarks[11].x, landmarks[11].y
-            left_hip = landmarks[23].x, landmarks[23].y
-            left_knee = landmarks[25].x, landmarks[25].y
-            left_ankle = landmarks[27].x, landmarks[27].y
-            
-            right_shoulder = landmarks[12].x, landmarks[12].y
-            right_hip = landmarks[24].x, landmarks[24].y
-            right_knee = landmarks[26].x, landmarks[26].y
-            right_ankle = landmarks[28].x, landmarks[28].y
-
-            # Calculate angles with error handling
-            try:
-                knee_angle = joint_angle(left_hip[0], left_hip[1], left_knee[0], left_knee[1], left_ankle[0], left_ankle[1])
-                angles['knee'] = knee_angle
-            except:
-                angles['knee'] = 180
-
-            try:
-                back_angle = joint_angle(left_shoulder[0], left_shoulder[1], left_hip[0], left_hip[1], left_knee[0], left_knee[1])
-                
-                # Apply smoothing to back angle
-                self.back_angle_buffer.append(back_angle)
-                smoothed_back_angle = np.mean(list(self.back_angle_buffer))
-                angles['back'] = smoothed_back_angle
-                
-                # Improved back rounding detection with persistence
-                if smoothed_back_angle < 140:  # More lenient threshold
-                    self.back_rounding_frames += 1
-                    # Only flag if it persists for multiple frames
-                    if self.back_rounding_frames > 8:  # ~0.25 seconds at 30fps
-                        faults.append("BACK_ROUNDING")
-                else:
-                    self.back_rounding_frames = max(0, self.back_rounding_frames - 2)
-                    
-            except:
-                angles['back'] = 170
-
-            # Depth check (only when in bottom phase)
-            if self.phase in ["BOTTOM", "DOWN"] and angles['knee'] > 95:
-                faults.append("INSUFFICIENT_DEPTH")
-            
-            # Knee valgus check (simplified)
-            try:
-                knee_distance = abs(left_knee[0] - right_knee[0])
-                ankle_distance = abs(left_ankle[0] - right_ankle[0])
-                if ankle_distance > 0 and (knee_distance / ankle_distance) < 0.8:
-                    faults.append("KNEE_VALGUS")
-            except:
-                pass
-            
-            # Forward lean check
-            try:
-                trunk_angle = self.calculate_trunk_lean(left_shoulder, left_hip)
-                angles['trunk'] = trunk_angle
-                if trunk_angle > 30:  # Degrees from vertical
-                    faults.append("FORWARD_LEAN")
-            except:
-                angles['trunk'] = 0
-
-        except Exception as e:
-            print(f"Form analysis error: {e}")
-            angles = {'knee': 180, 'back': 170, 'trunk': 0}
-
-        return faults, angles
-
-    def calculate_trunk_lean(self, shoulder, hip):
-        """Calculate forward lean angle"""
-        # Vector from hip to shoulder
-        trunk_vector = np.array([shoulder[0] - hip[0], shoulder[1] - hip[1]])
-        # Vertical reference vector (pointing up)
-        vertical_vector = np.array([0, -1])
-        
-        # Calculate angle
-        cos_angle = np.dot(trunk_vector, vertical_vector) / (np.linalg.norm(trunk_vector) * np.linalg.norm(vertical_vector))
-        cos_angle = np.clip(cos_angle, -1.0, 1.0)
-        angle = np.degrees(np.arccos(cos_angle))
-        
-        return abs(angle)
-
-    def calculate_form_score(self, faults):
-        """Calculate overall form score with dynamic penalties based on angles"""
-        base_score = 100
-        
-        # Base fault penalties
-        fault_penalties = {
-            "BACK_ROUNDING": 25,
-            "KNEE_VALGUS": 20,
-            "INSUFFICIENT_DEPTH": 15,
-            "FORWARD_LEAN": 15,
-            "ASYMMETRIC_MOVEMENT": 10,
-            "HEEL_RISE": 10
-        }
-        
-        # Apply base penalties
-        for fault in faults:
-            penalty = fault_penalties.get(fault, 5)
-            base_score -= penalty
-        
-        # Add dynamic scoring based on current angles for more realistic variation
-        if hasattr(self, 'current_angles') and self.current_angles:
-            # Adjust score based on knee angle quality
-            knee_angle = self.current_angles.get('knee', 180)
-            if knee_angle < 180:  # Only when squatting
-                if knee_angle > 120:  # Shallow squat
-                    base_score -= 5
-                elif knee_angle < 60:  # Very deep, good form
-                    base_score += 5
-            
-            # Adjust score based on back angle
-            back_angle = self.current_angles.get('back', 170)
-            if back_angle < 150:  # Some rounding
-                severity = (150 - back_angle) / 10  # More rounding = more penalty
-                base_score -= min(20, severity * 3)
-            
-            # Adjust based on trunk lean
-            trunk_angle = self.current_angles.get('trunk', 0)
-            if trunk_angle > 20:  # Forward lean
-                lean_penalty = (trunk_angle - 20) / 5  # Gradual penalty
-                base_score -= min(15, lean_penalty * 2)
-        
-        # Add some randomness for testing (remove this in production)
-        # import random
-        # base_score += random.randint(-3, 3)  # Small random variation for testing
-        
-        return max(10, min(100, int(base_score)))  # Ensure score stays between 10-100
-
-    def update_phase_detection(self, knee_angle):
-        """Enhanced phase detection with failed attempt tracking"""
-        previous_phase = self.phase
-        
-        # Phase transitions
-        if knee_angle > 160:
-            # User is standing - check if this completes an attempt
-            if previous_phase == "ASCENT":
-                # This is the end of an attempt (successful or failed)
-                self.rep_counter.rep_count += 1
-                
-                # Check if they achieved proper depth
-                if not self.hit_bottom_this_rep:
-                    # Failed attempt - add insufficient depth fault
-                    if not hasattr(self, 'current_faults'):
-                        self.current_faults = []
-                    self.current_faults.append("INSUFFICIENT_DEPTH")
-                    
-                    # Give feedback about the failed attempt
-                    if hasattr(self, 'feedback_manager'):
-                        self.feedback_manager.add_feedback(
-                            "Go deeper next time - reach full squat depth",
-                            priority=2, category="form", duration=3.0
-                        )
-                
-                # Reset for next attempt
-                self.hit_bottom_this_rep = False
-                
-            self.phase = "STANDING"
-            
-        elif previous_phase == "STANDING" and knee_angle < 160:
-            self.phase = "DESCENT"
-            # Reset depth flag when starting new attempt
-            self.hit_bottom_this_rep = False
-            
-        elif knee_angle < 100:
-            # User reached proper depth
-            self.phase = "BOTTOM" 
-            self.hit_bottom_this_rep = True
-            
-        elif previous_phase == "BOTTOM" and knee_angle > 100:
-            self.phase = "ASCENT"
-        elif previous_phase == "DESCENT" and knee_angle > 140:
-            # User is coming back up without reaching bottom - shallow squat
-            self.phase = "ASCENT"
-
-    def draw_overlays_improved(self, frame, metrics, faults, pose_results=None):
-        """Improved overlay with better proportions and feedback integration"""
-        height, width = frame.shape[:2]
-        
-        # Use stored pose results if not provided
-        if pose_results is None:
-            pose_results = self.current_pose_results
-        
-        # Dynamic sizing based on frame dimensions
-        base_font_scale = min(width, height) / 1000.0
-        font_scale = max(0.4, min(1.0, base_font_scale))
-        thickness = max(1, int(font_scale * 2))
-        line_height = max(25, int(font_scale * 35))
-        
-        # Draw pose skeleton if available and enabled
-        skeleton_drawn = False
-        if pose_results and pose_results.pose_landmarks and self.settings.get('show_skeleton', True):
-            skeleton_drawn = self.pose_detector.draw_landmarks(frame)
-            
-        # If no skeleton was drawn, show a message
-        if not skeleton_drawn and self.settings.get('show_skeleton', True):
-            # Create a more noticeable "No pose detected" message
-            cv2.putText(
-                frame, 
-                "NO POSE DETECTED", 
-                (width // 2 - 150, height // 2), 
-                cv2.FONT_HERSHEY_SIMPLEX, 
-                1.2, 
-                (0, 0, 255),  # Red
-                3
-            )
-            
-            # Add troubleshooting tips with better visibility
-            tips = [
-                "Make sure your FULL BODY is visible in the frame",
-                "Stand 6-8 feet (2-3 meters) from camera",
-                "Ensure good lighting - avoid backlighting",
-                "Wear contrasting clothing from background",
-                "Try simpler movements until detection works",
-                "Face the camera directly at first"
-            ]
-            
-            # Draw a semi-transparent background for the tips
-            tip_box_height = len(tips) * 30 + 20
-            tip_box_top = height // 2 + 20
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (width // 2 - 280, tip_box_top), 
-                         (width // 2 + 280, tip_box_top + tip_box_height), 
-                         (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-            
-            y_pos = height // 2 + 50
-            for tip in tips:
-                cv2.putText(
-                    frame, 
-                    f"• {tip}", 
-                    (width // 2 - 270, y_pos), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 
-                    0.7, 
-                    (0, 255, 255),  # Yellow
-                    2
-                )
-                y_pos += 30
-        
-        # Create semi-transparent header bar
-        overlay_height = max(50, int(height * 0.08))
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (width, overlay_height), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-        
-        # Main status line - more compact
-        phase_color = self.get_phase_color(self.phase)
-        status_y = int(overlay_height * 0.4)
-        
-        # Compact status display
-        status_parts = [
-            f"Reps: {self.rep_counter.rep_count}",
-            f"Phase: {self.phase}",
-            f"FPS: {int(metrics.get('fps', 0))}"
-        ]
-        
-        if 'form_score' in metrics:
-            score = metrics['form_score']
-            grade = self.score_to_grade(score)
-            status_parts.append(f"Score: {score} ({grade})")
-        
-        status_text = "  |  ".join(status_parts)
-        
-        # Draw main status with better contrast
-        # Add text background for better visibility
-        text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.8, thickness)[0]
-        cv2.rectangle(frame, (5, status_y - text_size[1] - 5), (text_size[0] + 15, status_y + 5), (0, 0, 0), -1)
-        cv2.putText(frame, status_text, (10, status_y), 
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.8, (255, 255, 255), thickness)
-        
-        # Draw session state indicator
-        session_state_text = f"State: {self.session_state.value.upper()}"
-        state_color = (0, 255, 0) if self.session_state == SessionState.ACTIVE else (0, 165, 255)
-        cv2.putText(frame, session_state_text, (width - 230, status_y), 
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.8, state_color, thickness)
-        
-        # Draw faults and feedback
-        y_offset = overlay_height + 20
-        
-        # Draw "Detected Issues" if there are faults
-        if faults:
-            cv2.putText(frame, "Detected Issues:", (10, y_offset), 
-                        cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.7, (0, 0, 255), thickness)
-            y_offset += line_height
-            
-            for fault in faults[:3]:  # Limit to 3 faults to avoid cluttering
-                cv2.putText(frame, f"• {fault}", (20, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, (0, 0, 255), 1)
-                y_offset += line_height
-            
-            if len(faults) > 3:
-                cv2.putText(frame, f"... and {len(faults) - 3} more", (20, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, (0, 0, 255), 1)
-                y_offset += line_height
-        
-        # Display feedback messages
-        feedback = metrics.get('feedback', [])
-        if feedback:
-            y_offset += 10
-            cv2.putText(frame, "Coaching Cues:", (10, y_offset), 
-                        cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.7, (255, 255, 0), thickness)
-            y_offset += line_height
-            
-            for message in feedback[:2]:  # Limit to 2 messages
-                cv2.putText(frame, f"• {message}", (20, y_offset), 
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, (255, 255, 0), 1)
-                y_offset += line_height
-        
-        return frame
-        cv2.rectangle(frame, (5, status_y - text_size[1] - 5), (text_size[0] + 15, status_y + 5), (0, 0, 0), -1)
-        cv2.putText(frame, status_text, (10, status_y), 
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.8, (255, 255, 255), thickness)
-        
-        # Secondary info line with angles
-        if self.current_angles:
-            angles_y = int(overlay_height * 0.8)
-            angle_parts = []
-            for angle_type, angle_value in self.current_angles.items():
-                if angle_type in ['knee', 'back']:
-                    angle_parts.append(f"{angle_type.title()}: {angle_value:.0f}°")
-            
-            if angle_parts:
-                angle_text = "  |  ".join(angle_parts)
-                # Add background for angle text
-                text_size = cv2.getTextSize(angle_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, 1)[0]
-                cv2.rectangle(frame, (5, angles_y - text_size[1] - 3), (text_size[0] + 15, angles_y + 3), (0, 0, 0), -1)
-                cv2.putText(frame, angle_text, (10, angles_y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, (220, 220, 220), 1)
-        
-        # Display current feedback from feedback manager with better visibility
-        current_feedback = self.feedback_manager.get_current_feedback()
-        if current_feedback:
-            feedback_y = overlay_height + 20
-            for i, feedback in enumerate(current_feedback[:2]):  # Show max 2 messages
-                color = self.get_feedback_color(feedback.priority)
-                bg_color = self.get_feedback_bg_color(feedback.priority)
-                text = feedback.message
-                
-                # Truncate long messages
-                if len(text) > 50:
-                    text = text[:47] + "..."
-                
-                # Calculate text position and size
-                y_pos = feedback_y + i * line_height
-                text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.7, thickness)[0]
-                
-                # Draw background rectangle for better contrast
-                padding = 8
-                cv2.rectangle(frame, 
-                            (5, y_pos - text_size[1] - padding), 
-                            (text_size[0] + 15, y_pos + padding), 
-                            bg_color, -1)
-                
-                # Draw border for emphasis
-                cv2.rectangle(frame, 
-                            (5, y_pos - text_size[1] - padding), 
-                            (text_size[0] + 15, y_pos + padding), 
-                            color, 2)
-                
-                # Draw text
-                cv2.putText(frame, text, (10, y_pos), 
-                           cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.7, color, thickness)
-            
-        # Add a test feedback message for debugging
-        if not current_feedback:
-            # Draw a test message to verify overlay is working
-            test_y = overlay_height + 20
-            test_text = "Test: Overlay system active"
-            text_size = cv2.getTextSize(test_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, 1)[0]
-            
-            # Draw background
-            cv2.rectangle(frame, (5, test_y - text_size[1] - 5), 
-                         (text_size[0] + 15, test_y + 5), (0, 0, 0), -1)
-            # Draw text in bright green
-            cv2.putText(frame, test_text, (10, test_y), 
-                       cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.6, (0, 255, 0), 1)
-        
-        return frame
-
-    def get_phase_color(self, phase):
-        """Get color based on movement phase (BGR format)"""
-        colors = {
-            "STANDING": (0, 200, 0),      # Green
-            "DESCENT": (0, 200, 255),     # Orange  
-            "BOTTOM": (0, 0, 200),        # Red
-            "ASCENT": (200, 100, 0)       # Blue
-        }
-        
-        # Handle Enum cases
-        if hasattr(phase, 'value'):
-            phase_name = phase.value
-        else:
-            phase_name = str(phase)
-            
-        # Default to white if not found
-        return colors.get(phase_name.upper(), (255, 255, 255))
-
-    def get_feedback_color(self, priority):
-        """Get text color based on feedback priority (BGR format)"""
-        if priority == 1:  # Critical - Red text
-            return (0, 0, 200)      
-        elif priority == 2:  # Important - Orange text
-            return (0, 100, 255)    
-        else:  # Minor - Dark blue text
-            return (150, 150, 0)    
-
-    def get_feedback_bg_color(self, priority):
-        """Get background color based on feedback priority (BGR format)"""
-        if priority == 1:  # Critical - Light red background
-            return (200, 200, 255)      
-        elif priority == 2:  # Important - Light orange background
-            return (200, 240, 255)    
-        else:  # Minor - Light yellow background
-            return (200, 255, 255)
-
-    def score_to_grade(self, score):
-        """Convert score to letter grade"""
-        if score >= 90: return "A"
-        elif score >= 80: return "B" 
-        elif score >= 70: return "C"
-        elif score >= 60: return "D"
-        else: return "F"
-
-    def get_current_feedback_messages(self):
-        """Get current feedback messages for UI display"""
-        return self.feedback_manager.get_current_feedback()
-    
-    def update_settings(self, new_settings):
-        """Update processor settings from GUI"""
-        self.settings.update(new_settings)
-        
-        # Update pose detector confidence if needed
-        if 'confidence_threshold' in new_settings:
-            confidence = new_settings['confidence_threshold']
-            # Recreate pose detector with new confidence
-            import mediapipe as mp
-            self.pose_detector._pose = self.pose_detector.mp_pose.Pose(
-                static_image_mode=False,
-                model_complexity=1,
-                smooth_landmarks=True,
-                min_detection_confidence=confidence,
-                min_tracking_confidence=confidence
-            )
-
-    def get_analysis_summary(self):
-        """Get current analysis summary for UI display"""
+    def _get_error_metrics(self, frame, message):
+        """Returns a standard dictionary for error states or no pose."""
+        # You can draw the error message on the frame here if you want
+        cv2.putText(frame, message, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         return {
             'rep_count': self.rep_counter.rep_count,
-            'phase': self.phase,
-            'form_score': self.form_score,
-            'current_angles': self.current_angles,
-            'active_feedback': self.feedback_manager.get_current_feedback(),
-            'fps': self.fps
+            'phase': 'ERROR', 'fps': self.fps,
+            'session_state': self.session_state.value, 'landmarks_detected': False,
+            'processed_frame': frame, 'last_rep_analysis': self.last_rep_analysis
         }
-    
-    def toggle_overlay_component(self, component, enabled):
-        """Toggle specific overlay components"""
-        if not hasattr(self, 'overlay_settings'):
-            self.overlay_settings = {
-                'show_metrics': True,
-                'show_feedback': True,
-                'show_skeleton': True,
-                'show_angles': True
-            }
-        
-        self.overlay_settings[component] = enabled
-        
-    def create_contrast_text(self, frame, text, position, font_scale, color, thickness):
-        """Draw text with background for better contrast"""
-        x, y = position
-        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
-        
-        # Draw black background with some padding
-        padding = 4
-        cv2.rectangle(frame, 
-                     (x - padding, y - text_size[1] - padding), 
-                     (x + text_size[0] + padding, y + padding), 
-                     (0, 0, 0), -1)
-        
-        # Draw white border for extra contrast
-        cv2.rectangle(frame, 
-                     (x - padding, y - text_size[1] - padding), 
-                     (x + text_size[0] + padding, y + padding), 
-                     (255, 255, 255), 1)
-        
-        # Draw the text
-        cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
-        
-        return text_size
-
-    def end_session(self):
-        """End the current session and clean up resources."""
-        try:
-            # Stop the session
-            self.session_state = SessionState.STOPPED
-            
-            # Reset counters
-            self.rep_counter.reset()
-            self.calibration_frames = 0
-            
-            # Clear accumulated data
-            self.current_rep_data = []
-            self.last_rep_analysis = None
-            
-        except Exception as e:
-            print(f"Warning: Error ending session: {e}")
