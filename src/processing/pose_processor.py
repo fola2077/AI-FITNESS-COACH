@@ -232,7 +232,7 @@ class PoseProcessor:
                 
             else:
                 # Standard grading - using improved weighted scoring system
-                self.last_rep_analysis = self.form_grader.grade_repetition_weighted(frame_metrics)
+                self.last_rep_analysis = self.form_grader.grade_repetition(frame_metrics)
             
             # Add timestamp for UI tracking
             self.last_rep_analysis['timestamp'] = time.time()

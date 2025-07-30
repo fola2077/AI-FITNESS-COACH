@@ -111,6 +111,40 @@ def print_startup_info():
     print("\n🚀 Starting application...")
     print("-" * 50)
 
+def validate_form_grader():
+    """Validate form grader configuration on startup."""
+    try:
+        from src.grading.advanced_form_grader import (
+            IntelligentFormGrader, 
+            ThresholdConfig,
+            BiomechanicalMetrics
+        )
+        
+        # Test form grader initialization
+        config = ThresholdConfig.emergency_calibrated()
+        grader = IntelligentFormGrader(difficulty="casual", config=config)
+        
+        print("✅ Advanced Form Grader initialized successfully")
+        
+        # Test with dummy data
+        test_metrics = [
+            BiomechanicalMetrics(
+                knee_angle_left=90,
+                knee_angle_right=92,
+                back_angle=110,
+                landmark_visibility=0.9
+            )
+        ]
+        
+        result = grader.grade_repetition(test_metrics)
+        print(f"✅ Form grader test passed - Score: {result['score']}%")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Form grader validation failed: {e}")
+        return False
+
 def run_application():
     """
     Main application entry point with comprehensive error handling.
@@ -129,6 +163,10 @@ def run_application():
             print("❌ Dependency check failed. Please install required packages.")
             input("Press Enter to exit...")
             return 1
+        
+        # NEW: Validate form grader
+        if not validate_form_grader():
+            print("⚠️ Form grader validation failed, but continuing anyway...")
         
         # Import Qt after dependency check
         from PySide6.QtWidgets import QApplication

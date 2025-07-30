@@ -134,7 +134,7 @@ def test_scoring_systems():
         
         # Test NEW weighted scoring system
         print("\n🎯 NEW SYSTEM (Weighted Multi-Component):")
-        new_result = grader.grade_repetition_weighted(test_metrics)
+        new_result = grader.grade_repetition(test_metrics)
         print(f"   Final Score: {new_result['score']}%")
         
         # Show component breakdown
@@ -195,7 +195,7 @@ def demonstrate_threshold_fix():
         print("❌ Still needs adjustment")
     
     # Test the analysis
-    result = grader.grade_repetition_weighted(normal_sway_metrics)
+    result = grader.grade_repetition(normal_sway_metrics)
     print(f"\n🎯 Score with normal sway: {result['score']}%")
     stability_score = result['component_scores']['stability']['score']
     print(f"📊 Stability component: {stability_score:.1f}%")

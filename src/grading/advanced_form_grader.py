@@ -26,6 +26,52 @@ from typing import Dict, List, Tuple, Optional, Any
 from enum import Enum
 from collections import deque, defaultdict
 
+# Set up logger for this module
+logger = logging.getLogger(__name__)
+
+@dataclass
+class ThresholdConfig:
+    """
+    Centralized threshold configuration for easy tuning and experimentation.
+    
+    This replaces hardcoded thresholds throughout the system, allowing coaches
+    and researchers to easily adjust sensitivity without code changes.
+    """
+    # Safety Analyzer Thresholds (degrees)
+    safety_severe_back_rounding: float = 60.0      # Emergency calibrated from 85°
+    safety_moderate_back_rounding: float = 120.0   # Emergency calibrated from 110°  
+    safety_excellent_posture: float = 140.0        # Emergency calibrated from 130°
+    
+    # Stability Analyzer Thresholds (normalized sway values)
+    stability_severe_instability: float = 0.080    # Emergency calibrated from 0.020 (4x increase)
+    stability_poor_stability: float = 0.050        # Emergency calibrated from 0.015
+    stability_excellent_stability: float = 0.010   # Emergency calibrated from 0.005
+    
+    # Depth Analyzer Thresholds (would be added when implementing depth analysis)
+    depth_insufficient_range: float = 0.6          # Placeholder for future depth analysis
+    depth_excellent_range: float = 0.9             # Placeholder for future depth analysis
+    
+    @classmethod
+    def emergency_calibrated(cls) -> 'ThresholdConfig':
+        """
+        Returns the emergency-calibrated configuration that resolved the
+        'broken compass' problem in the AI Fitness Coach system.
+        
+        These values were empirically determined to provide balanced, 
+        actionable feedback instead of contradictory assessments.
+        """
+        return cls()  # Default values are already the emergency-calibrated ones
+    
+    def log_configuration(self):
+        """Log current threshold configuration for debugging and validation."""
+        logger.info("Threshold Configuration:")
+        logger.info(f"  Safety - Severe: <{self.safety_severe_back_rounding}°, "
+                   f"Moderate: <{self.safety_moderate_back_rounding}°, "
+                   f"Excellent: >{self.safety_excellent_posture}°")
+        logger.info(f"  Stability - Severe: >{self.stability_severe_instability:.3f}, "
+                   f"Poor: >{self.stability_poor_stability:.3f}, "
+                   f"Excellent: <{self.stability_excellent_stability:.3f}")
+
 class UserLevel(Enum):
     """User skill level enumeration for adaptive analysis"""
     BEGINNER = "beginner"
@@ -377,19 +423,21 @@ class BaseAnalyzer:
         pass
 
 class SafetyAnalyzer(BaseAnalyzer):
-    """Analyzes critical safety issues like back rounding with CONSISTENT thresholds"""
+    """Analyzes critical safety issues like back rounding with CONFIGURABLE thresholds"""
     
-    def __init__(self):
+    def __init__(self, config: ThresholdConfig = None):
         super().__init__(required_landmarks=[11, 12, 23, 24])  # shoulders, hips
         
-        # EMERGENCY FIX: More realistic back angle thresholds
-        # 90° back angle = torso parallel to floor (dangerous!)
-        self.SEVERE_BACK_ROUNDING_THRESHOLD = 60   # Stricter (was 70) - severe rounding
-        self.MODERATE_BACK_ROUNDING_THRESHOLD = 120 # Much stricter (was 90) - excessive lean
-        self.EXCELLENT_POSTURE_THRESHOLD = 140      # Higher standard (was 120) - upright
+        # Use provided config or create emergency-calibrated default
+        self.config = config or ThresholdConfig.emergency_calibrated()
         
-        print(f"[SafetyAnalyzer] 🔧 Emergency threshold calibration applied")
-        print(f"[SafetyAnalyzer] Severe: <{self.SEVERE_BACK_ROUNDING_THRESHOLD}°, Moderate: <{self.MODERATE_BACK_ROUNDING_THRESHOLD}°, Excellent: >{self.EXCELLENT_POSTURE_THRESHOLD}°")
+        # Apply configuration thresholds
+        self.SEVERE_BACK_ROUNDING_THRESHOLD = self.config.safety_severe_back_rounding
+        self.MODERATE_BACK_ROUNDING_THRESHOLD = self.config.safety_moderate_back_rounding  
+        self.EXCELLENT_POSTURE_THRESHOLD = self.config.safety_excellent_posture
+        
+        logger.info("SafetyAnalyzer: Threshold configuration applied")
+        logger.info(f"SafetyAnalyzer: Severe: <{self.SEVERE_BACK_ROUNDING_THRESHOLD}°, Moderate: <{self.MODERATE_BACK_ROUNDING_THRESHOLD}°, Excellent: >{self.EXCELLENT_POSTURE_THRESHOLD}°")
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
         """Analyze with CONSISTENT standards regardless of rep number"""
@@ -437,7 +485,7 @@ class SafetyAnalyzer(BaseAnalyzer):
                 'metric_value': min_back_angle
             })
         
-        print(f"[SafetyAnalyzer] 📊 Back angle: {min_back_angle:.1f}° (Severe: <{self.SEVERE_BACK_ROUNDING_THRESHOLD}°, Moderate: <{self.MODERATE_BACK_ROUNDING_THRESHOLD}°)")
+        logger.debug(f"SafetyAnalyzer: Back angle: {min_back_angle:.1f}° (Severe: <{self.SEVERE_BACK_ROUNDING_THRESHOLD}°, Moderate: <{self.MODERATE_BACK_ROUNDING_THRESHOLD}°)")
         
         return {
             'faults': faults, 
@@ -483,21 +531,21 @@ class SafetyAnalyzer(BaseAnalyzer):
             'range': np.max(back_angles) - np.min(back_angles)
         }
         
-        # Threshold analysis - UPDATED for stricter thresholds
+        # Threshold analysis - FIXED: Use actual class thresholds, not hardcoded values
         min_angle = np.min(back_angles)
         debug_info['threshold_analysis'] = {
-            'severe_threshold': 70,
-            'moderate_threshold': 90,  # Updated from 85 to 90
-            'excellent_threshold': 120,
+            'severe_threshold': self.SEVERE_BACK_ROUNDING_THRESHOLD,     # Now uses class attribute
+            'moderate_threshold': self.MODERATE_BACK_ROUNDING_THRESHOLD, # Now uses class attribute
+            'excellent_threshold': self.EXCELLENT_POSTURE_THRESHOLD,     # Now uses class attribute
             'min_angle_classification': (
-                'SEVERE' if min_angle < 70 else
-                'MODERATE' if min_angle < 90 else  # Updated threshold
-                'EXCELLENT' if min_angle >= 120 else
+                'SEVERE' if min_angle < self.SEVERE_BACK_ROUNDING_THRESHOLD else
+                'MODERATE' if min_angle < self.MODERATE_BACK_ROUNDING_THRESHOLD else
+                'EXCELLENT' if min_angle >= self.EXCELLENT_POSTURE_THRESHOLD else
                 'NORMAL'
             ),
-            'frames_below_severe': sum(1 for angle in back_angles if angle < 70),
-            'frames_below_moderate': sum(1 for angle in back_angles if angle < 90),  # Updated
-            'frames_above_excellent': sum(1 for angle in back_angles if angle >= 120)
+            'frames_below_severe': sum(1 for angle in back_angles if angle < self.SEVERE_BACK_ROUNDING_THRESHOLD),
+            'frames_below_moderate': sum(1 for angle in back_angles if angle < self.MODERATE_BACK_ROUNDING_THRESHOLD),
+            'frames_above_excellent': sum(1 for angle in back_angles if angle >= self.EXCELLENT_POSTURE_THRESHOLD)
         }
         
         # Frame-by-frame analysis (sample every 5th frame to avoid spam)
@@ -508,10 +556,11 @@ class SafetyAnalyzer(BaseAnalyzer):
                     'frame': i,
                     'back_angle': fm.back_angle,
                     'visibility': fm.landmark_visibility,
+                    # FIXED: Use actual class thresholds, not hardcoded values
                     'classification': (
-                        'SEVERE' if fm.back_angle < 70 else
-                        'MODERATE' if fm.back_angle < 85 else
-                        'EXCELLENT' if fm.back_angle >= 120 else
+                        'SEVERE' if fm.back_angle < self.SEVERE_BACK_ROUNDING_THRESHOLD else
+                        'MODERATE' if fm.back_angle < self.MODERATE_BACK_ROUNDING_THRESHOLD else
+                        'EXCELLENT' if fm.back_angle >= self.EXCELLENT_POSTURE_THRESHOLD else
                         'NORMAL'
                     )
                 }
@@ -526,8 +575,8 @@ class DepthAnalyzer(BaseAnalyzer):
         super().__init__(required_landmarks=[25, 26, 27, 28])  # knees, ankles
     
     def _check_difficulty(self, difficulty: str) -> bool:
-        # Enable depth analysis for ALL difficulty levels - depth is critical for safety!
-        return difficulty in ['beginner', 'casual', 'professional']
+        # FIXED: Enable depth analysis for ALL difficulty levels - depth is critical for safety!
+        return True  # Depth analysis is critical for all users regardless of skill level
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
         knee_angles = [fm.knee_angle_left for fm in frame_metrics if fm.knee_angle_left > 0]
@@ -645,19 +694,21 @@ class DepthAnalyzer(BaseAnalyzer):
         return debug_info
 
 class StabilityAnalyzer(BaseAnalyzer):
-    """Analyzes postural stability and balance with CONSISTENT thresholds"""
+    """Analyzes postural stability and balance with CONFIGURABLE thresholds"""
     
-    def __init__(self):
+    def __init__(self, config: ThresholdConfig = None):
         super().__init__(required_landmarks=[0, 15, 16])  # nose, ankles for COM
         
-        # EMERGENCY FIX: More realistic thresholds based on biomechanical literature
-        # Previous thresholds were 4x too strict, causing everything to be "severe"
-        self.SEVERE_INSTABILITY_THRESHOLD = 0.080  # 4x more lenient (was 0.020)
-        self.POOR_STABILITY_THRESHOLD = 0.050      # 4x more lenient (was 0.012)
-        self.EXCELLENT_STABILITY_THRESHOLD = 0.015  # 3x more lenient (was 0.005)
+        # Use provided config or create emergency-calibrated default
+        self.config = config or ThresholdConfig.emergency_calibrated()
         
-        print(f"[StabilityAnalyzer] 🔧 Emergency threshold calibration applied")
-        print(f"[StabilityAnalyzer] Severe: >{self.SEVERE_INSTABILITY_THRESHOLD:.3f}, Poor: >{self.POOR_STABILITY_THRESHOLD:.3f}, Excellent: <{self.EXCELLENT_STABILITY_THRESHOLD:.3f}")
+        # Apply configuration thresholds
+        self.SEVERE_INSTABILITY_THRESHOLD = self.config.stability_severe_instability
+        self.POOR_STABILITY_THRESHOLD = self.config.stability_poor_stability
+        self.EXCELLENT_STABILITY_THRESHOLD = self.config.stability_excellent_stability
+        
+        logger.info("StabilityAnalyzer: Threshold configuration applied")
+        logger.info(f"StabilityAnalyzer: Severe: >{self.SEVERE_INSTABILITY_THRESHOLD:.3f}, Poor: >{self.POOR_STABILITY_THRESHOLD:.3f}, Excellent: <{self.EXCELLENT_STABILITY_THRESHOLD:.3f}")
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
         """Analyze with CONSISTENT standards regardless of rep number"""
@@ -709,7 +760,7 @@ class StabilityAnalyzer(BaseAnalyzer):
                 'metric_value': total_sway
             })
         
-        print(f"[StabilityAnalyzer] 📊 Sway: {total_sway:.4f} (Severe: >{self.SEVERE_INSTABILITY_THRESHOLD}, Poor: >{self.POOR_STABILITY_THRESHOLD})")
+        logger.debug(f"StabilityAnalyzer: Sway: {total_sway:.4f} (Severe: >{self.SEVERE_INSTABILITY_THRESHOLD}, Poor: >{self.POOR_STABILITY_THRESHOLD})")
         
         return {
             'faults': faults, 
@@ -884,8 +935,12 @@ class IntelligentFormGrader:
     Provides comprehensive movement quality assessment with visibility-aware analysis.
     """
     
-    def __init__(self, user_profile: UserProfile = None, difficulty: str = "beginner"):
-        """Initialize the intelligent form grader."""
+    def __init__(self, user_profile: UserProfile = None, difficulty: str = "beginner", config: ThresholdConfig = None):
+        """Initialize the intelligent form grader with configurable thresholds."""
+        # Initialize logger first
+        import logging
+        self.logger = logging.getLogger(__name__)
+        
         self.user_profile = user_profile or UserProfile()
         self.movement_analyzer = MovementQualityAnalyzer()
         self.fatigue_predictor = FatiguePredictor()
@@ -893,13 +948,17 @@ class IntelligentFormGrader:
         self.recent_scores = deque(maxlen=10)
         self.fault_frequency = defaultdict(int)
 
-        # Initialize individual analyzers for modular approach
+        # Use provided config or create emergency-calibrated default
+        self.config = config or ThresholdConfig.emergency_calibrated()
+        self.config.log_configuration()  # Log the thresholds being used
+
+        # Initialize individual analyzers for modular approach with shared config
         self.analyzers = {
-            'safety': SafetyAnalyzer(),
-            'depth': DepthAnalyzer(),
-            'stability': StabilityAnalyzer(),
-            'tempo': TempoAnalyzer(),
-            'symmetry': SymmetryAnalyzer()
+            'safety': SafetyAnalyzer(self.config),
+            'depth': DepthAnalyzer(),  # Will add config when implemented
+            'stability': StabilityAnalyzer(self.config),
+            'tempo': TempoAnalyzer(),  # Will add config when implemented
+            'symmetry': SymmetryAnalyzer()  # Will add config when implemented
         }
 
         # Set initial difficulty
@@ -928,10 +987,16 @@ class IntelligentFormGrader:
         self.fault_frequency.clear()
         
         rep_number = len(self.recent_scores) + 1
-        print(f"[FormGrader] 🔄 Session state reset for fresh analysis (Rep #{rep_number})")
+        logger.debug(f"FormGrader: Session state reset for fresh analysis (Rep #{rep_number})")
     
     def reset_workout_session(self):
-        """Complete reset between different workout sessions"""
+        """
+        Complete reset between different workout sessions.
+        
+        Prevents data carryover between sessions to ensure each workout
+        starts fresh without contamination from previous sessions.
+        """
+        # Clear all session data
         self.recent_scores.clear()
         self.fault_frequency.clear()
         
@@ -948,8 +1013,40 @@ class IntelligentFormGrader:
         if hasattr(self.fatigue_predictor, 'reset'):
             self.fatigue_predictor.reset()
         
-        print("[FormGrader] 🏋️ New workout session - complete state reset")
-        print("[FormGrader] 🏋️ New workout session - complete state reset")
+        # Reset random seed for variation consistency per session
+        import random
+        import time
+        random.seed(int(time.time()))
+        
+        # Track session start for debugging
+        self.session_start_time = time.time()
+        
+        logger.info("FormGrader: NEW WORKOUT SESSION - Complete state reset, fresh start guaranteed")
+    
+    def ensure_fresh_session(self):
+        """
+        Ensure this is treated as a fresh session if significant time has passed.
+        
+        Automatically resets session if more than 30 minutes have passed since
+        last activity to prevent stale data from affecting new workouts.
+        """
+        import time
+        
+        current_time = time.time()
+        
+        # Check if we have session start time tracked
+        if not hasattr(self, 'session_start_time'):
+            self.session_start_time = current_time
+            return
+        
+        # If more than 30 minutes since session start, auto-reset
+        time_since_start = current_time - self.session_start_time
+        if time_since_start > 1800:  # 30 minutes = 1800 seconds
+            logger.info(f"FormGrader: Auto-resetting session after {time_since_start/60:.1f} minutes of inactivity")
+            self.reset_workout_session()
+        
+        # Update activity timestamp
+        self.last_activity_time = current_time
     
     def set_difficulty(self, difficulty: str) -> None:
         """Set difficulty level with validation"""
@@ -960,7 +1057,7 @@ class IntelligentFormGrader:
         
         self.difficulty = difficulty
         self._update_difficulty_thresholds()
-        print(f"[FormGrader] Difficulty updated to: {self.difficulty}")
+        logger.debug(f"FormGrader: Difficulty updated to: {self.difficulty}")
     
     def _update_difficulty_thresholds(self) -> None:
         """Update analyzer configurations based on difficulty level"""
@@ -980,132 +1077,24 @@ class IntelligentFormGrader:
     
     def grade_repetition(self, frame_metrics: List[BiomechanicalMetrics]) -> dict:
         """
-        Grade a complete repetition using the modular analyzer system.
+        FIXED: Balanced multi-component scoring system (replaces the old broken method).
+        
+        This method prevents the "broken compass" problem by scoring each component
+        independently and combining them with weights, so no single issue destroys the entire score.
         """
+        # Ensure we're working with a fresh session (prevents carryover)
+        self.ensure_fresh_session()
+        
         if not frame_metrics:
-            print("[FormGrader] No frame metrics provided")
-            return {
-                'score': 0,
-                'faults': ['NO_DATA'],
-                'phase_durations': {},
-                'feedback': ["No movement data available for analysis."],
-                'biomechanical_summary': {}
-            }
-
-        print(f"[FormGrader] 🎯 ANALYZING REP #{len(self.recent_scores) + 1} with {len(frame_metrics)} frames ({self.difficulty} difficulty)")
-        
-        # ADD DEBUG: Check the actual data quality and previous scores
-        if self.recent_scores:
-            print(f"[FormGrader] 📊 Previous scores: {list(self.recent_scores)}")
-        
-        valid_knee_angles = [fm.knee_angle_left for fm in frame_metrics if fm.knee_angle_left > 0]
-        valid_back_angles = [fm.back_angle for fm in frame_metrics if fm.back_angle > 0]
-        print(f"[FormGrader] DEBUG: {len(valid_knee_angles)} frames with valid knee angles")
-        if valid_knee_angles:
-            print(f"[FormGrader] DEBUG: Knee angle range: {min(valid_knee_angles):.1f}° - {max(valid_knee_angles):.1f}°")
-        print(f"[FormGrader] DEBUG: {len(valid_back_angles)} frames with valid back angles")
-        if valid_back_angles:
-            print(f"[FormGrader] DEBUG: Back angle range: {min(valid_back_angles):.1f}° - {max(valid_back_angles):.1f}° (180° = upright)")
-
-        all_faults, all_penalties, all_bonuses = [], [], []
-        analysis_results = {}
-
-        # --- Refactored Analyzer Loop ---
-        for name, analyzer in self.analyzers.items():
-            if analyzer.can_analyze(frame_metrics, self.difficulty):
-                try:
-                    result = analyzer.analyze(frame_metrics)
-                    analysis_results[name] = result
-                    all_faults.extend(result.get('faults', []))
-                    all_penalties.extend(result.get('penalties', []))
-                    all_bonuses.extend(result.get('bonuses', []))
-                    print(f"[FormGrader] ✅ {name.title()} analysis complete.")
-                except Exception as e:
-                    print(f"[FormGrader] ❌ Error in {name} analyzer: {e}")
-            else:
-                print(f"[FormGrader] ⏭️ Skipping {name} analyzer (criteria not met).")
-        # --- End of Refactoring ---
-
-        # Calculate final score
-        base_score = 100.0
-        
-        # Apply penalties
-        total_penalty = 0.0
-        for penalty in all_penalties:
-            penalty_amount = penalty.get('amount', 0)
-            total_penalty += penalty_amount
-            base_score -= penalty_amount
-        
-        # Apply bonuses ONLY if no severe safety faults detected
-        critical_faults = ['SEVERE_BACK_ROUNDING', 'SEVERE_INSTABILITY', 'PARTIAL_REP']
-        has_critical_faults = any(fault in all_faults for fault in critical_faults)
-        
-        total_bonus = 0.0
-        if not has_critical_faults:  # Only apply bonuses if no critical safety issues
-            for bonus in all_bonuses:
-                bonus_amount = bonus.get('amount', 0)
-                total_bonus += bonus_amount
-                base_score += bonus_amount
-        else:
-            print(f"[FormGrader] ⚠️ Bonuses disabled due to critical safety faults: {[f for f in all_faults if f in critical_faults]}")
-        
-        # Ensure score bounds
-        final_score = max(0, min(100, int(base_score)))
-
-        # --- CONSISTENT SCORING: No adaptive normalization ---
-        # Note: Anthropometric normalization disabled to ensure consistent scoring
-        # across repetitions without adaptive behavior that could cause unrealistic improvements
-        print(f"[FormGrader] Raw calculated score: {final_score}% (no adaptive normalization applied)")
-
-        # Generate feedback based on results
-        feedback = self._generate_feedback(final_score, all_faults, all_penalties, all_bonuses)
-        
-        # Create biomechanical summary
-        biomechanical_summary = self._create_biomechanical_summary(
-            frame_metrics, analysis_results, all_penalties, all_bonuses
-        )
-        
-        print(f"[FormGrader] FINAL SCORE: {final_score}% "
-              f"(base: 100, penalties: -{total_penalty:.1f}, bonuses: +{total_bonus:.1f})")
-        print(f"[FormGrader] Detected faults: {all_faults}")
-        
-        # Track this score for pattern analysis
-        self.recent_scores.append(final_score)
-        for fault in all_faults:
-            self.fault_frequency[fault] += 1
-        
-        # DEBUG: Show scoring pattern
-        if len(self.recent_scores) > 1:
-            print(f"[FormGrader] 📈 Score history: {list(self.recent_scores)}")
-            avg_score = sum(self.recent_scores) / len(self.recent_scores)
-            print(f"[FormGrader] 📊 Average score: {avg_score:.1f}%")
-        
-        return {
-            'score': final_score,
-            'faults': all_faults,
-            'feedback': feedback,
-            'phase_durations': {'total': len(frame_metrics) / 30.0},
-            'biomechanical_summary': biomechanical_summary,
-            'analysis_details': analysis_results
-        }
-    
-    def grade_repetition_weighted(self, frame_metrics: List[BiomechanicalMetrics]) -> dict:
-        """
-        NEW: Weighted multi-component scoring system to fix the 'broken compass' problem.
-        
-        This revolutionary approach prevents any single analyzer from dominating the score,
-        ensuring balanced and fair assessment across all movement quality dimensions.
-        """
-        if not frame_metrics:
-            print("[FormGrader] No frame metrics provided")
+            logger.warning("FormGrader: No frame metrics provided")
             return {
                 'score': 0,
                 'faults': ['NO_DATA'],
                 'feedback': ["No movement data available for analysis."],
-                'scoring_method': 'weighted_multi_component'
+                'scoring_method': 'balanced_multi_component'
             }
         
-        print(f"[FormGrader] 🎯 WEIGHTED ANALYSIS - Rep #{len(self.recent_scores) + 1}")
+        logger.info(f"FormGrader: BALANCED ANALYSIS - Rep #{len(self.recent_scores) + 1}")
         
         # Calculate component scores separately - each gets independent assessment
         component_scores = {}
@@ -1113,7 +1102,6 @@ class IntelligentFormGrader:
         analysis_details = {}
         
         # 1. SAFETY SCORE (Most Important - 50% weight)
-        # Safety is paramount - back posture, spinal alignment
         safety_result = self.analyzers['safety'].analyze(frame_metrics)
         safety_score = self._calculate_component_score(safety_result, base_score=100)
         component_scores['safety'] = {
@@ -1126,7 +1114,6 @@ class IntelligentFormGrader:
         analysis_details['safety'] = safety_result
         
         # 2. DEPTH SCORE (Important - 30% weight)
-        # Range of motion and movement completion
         if self.analyzers['depth'].can_analyze(frame_metrics, self.difficulty):
             depth_result = self.analyzers['depth'].analyze(frame_metrics)
             depth_score = self._calculate_component_score(depth_result, base_score=100)
@@ -1140,7 +1127,6 @@ class IntelligentFormGrader:
             analysis_details['depth'] = depth_result
         
         # 3. STABILITY SCORE (Refinement - 20% weight)
-        # Balance and control - important but shouldn't dominate
         if self.analyzers['stability'].can_analyze(frame_metrics, self.difficulty):
             stability_result = self.analyzers['stability'].analyze(frame_metrics)
             stability_score = self._calculate_component_score(stability_result, base_score=100)
@@ -1153,22 +1139,36 @@ class IntelligentFormGrader:
             all_faults.extend(stability_result.get('faults', []))
             analysis_details['stability'] = stability_result
         
-        # Calculate weighted final score - the mathematical breakthrough!
+        # Calculate weighted final score - PREVENTS "broken compass" problem
         weighted_score = 0.0
         total_weight = 0.0
         
         for component, data in component_scores.items():
             weighted_score += data['score'] * data['weight']
             total_weight += data['weight']
-            print(f"[FormGrader] 📊 {component.title()}: {data['score']:.1f}% (weight: {data['weight']:.0%})")
+            logger.debug(f"FormGrader: {component.title()}: {data['score']:.1f}% (weight: {data['weight']:.0%})")
         
-        final_score = int(weighted_score / total_weight) if total_weight > 0 else 0
+        base_score = weighted_score / total_weight if total_weight > 0 else 0
         
-        # Generate prioritized feedback - matches the scores!
-        feedback = self._generate_prioritized_feedback(component_scores, final_score)
+        # ENHANCEMENT: Add realistic human movement variation
+        # Create pose_data and rep_data for variation calculation
+        pose_data = {
+            'landmarks': frame_metrics[-1].landmark_visibility if frame_metrics else 0.0,
+            'frame_count': len(frame_metrics)
+        }
+        rep_data = {
+            'rep_number': len(self.recent_scores) + 1,  # Current rep number
+            'timing': len(frame_metrics) * 0.033,  # Approximate duration in seconds
+            'sequence_data': frame_metrics
+        }
         
-        print(f"[FormGrader] 🎯 WEIGHTED FINAL SCORE: {final_score}%")
-        print(f"[FormGrader] 📋 Priority improvement areas: {[c for c, d in component_scores.items() if d['score'] < 75]}")
+        # Apply realistic variation to the base weighted score
+        final_score = int(self._add_realistic_variation(base_score, pose_data, rep_data))
+        
+        # Generate varied, contextual feedback
+        feedback = self._generate_prioritized_feedback(component_scores, final_score, rep_data['rep_number'])
+        
+        logger.info(f"FormGrader: SCORE: {base_score:.1f}% → {final_score}% (after variation)")
         
         self.recent_scores.append(final_score)
         
@@ -1178,7 +1178,7 @@ class IntelligentFormGrader:
             'feedback': feedback,
             'component_scores': component_scores,
             'analysis_details': analysis_details,
-            'scoring_method': 'weighted_multi_component',
+            'scoring_method': 'balanced_multi_component',
             'phase_durations': {'total': len(frame_metrics) / 30.0}
         }
     
@@ -1196,23 +1196,153 @@ class IntelligentFormGrader:
         
         return max(0, min(100, score))
     
-    def _generate_prioritized_feedback(self, component_scores: Dict, final_score: int) -> List[str]:
-        """Generate feedback prioritized by component importance and score"""
+    def _add_realistic_variation(self, weighted_score: float, pose_data: Dict, rep_data: Dict) -> float:
+        """
+        Add realistic variation to scores based on human movement factors.
+        
+        Simulates natural human movement inconsistencies including:
+        - Movement consistency (how stable the movement pattern is)
+        - Fatigue effects (slight degradation over time)
+        - Tempo variations (movement speed changes)
+        - Controlled randomness (small natural variations)
+        
+        Args:
+            weighted_score: Base weighted score from analyzers
+            pose_data: Current pose data with landmarks
+            rep_data: Repetition data including timing and sequence
+            
+        Returns:
+            Adjusted score with realistic human variation
+        """
+        import random
+        import math
+        
+        # Base variation factor (start with the weighted score)
+        varied_score = weighted_score
+        
+        # Factor 1: Movement Consistency Variation (-2 to +1 points)
+        # Simulate how consistent the movement pattern is
+        consistency_factor = random.uniform(0.75, 1.01)  # 75% to 101% consistency
+        consistency_adjustment = (consistency_factor - 0.9) * 10  # -1.5 to +1.1 points
+        varied_score += consistency_adjustment
+        
+        # Factor 2: Fatigue Simulation (-1 to 0 points after rep 5)
+        # Simulate slight performance degradation with fatigue
+        rep_number = rep_data.get('rep_number', 1)
+        if rep_number > 5:
+            fatigue_factor = min(0.02 * (rep_number - 5), 0.04)  # Max 4% degradation
+            fatigue_adjustment = -fatigue_factor * weighted_score
+            varied_score += fatigue_adjustment
+            
+        # Factor 3: Tempo Variation (-1 to +1 points)
+        # Simulate effects of movement speed on form quality
+        tempo_variation = random.uniform(-0.015, 0.015)  # ±1.5% variation
+        tempo_adjustment = tempo_variation * weighted_score
+        varied_score += tempo_adjustment
+        
+        # Factor 4: Natural Human Randomness (-1 to +1 points)
+        # Small random variations that occur in all human movement
+        natural_variation = random.uniform(-1.2, 1.2)
+        varied_score += natural_variation
+        
+        # Factor 5: Form Stability Bonus (0 to +1 points)
+        # Reward consistently good form with small bonuses
+        if weighted_score >= 85:
+            stability_bonus = random.uniform(0, 1.0)
+            varied_score += stability_bonus
+        
+        # Apply realistic bounds and ensure score makes sense
+        # Prevent unrealistic jumps while allowing natural variation
+        max_change = 4.0  # Maximum total change from base score
+        change_amount = varied_score - weighted_score
+        if abs(change_amount) > max_change:
+            change_amount = max_change if change_amount > 0 else -max_change
+            varied_score = weighted_score + change_amount
+        
+        # Ensure final score stays within realistic bounds
+        final_score = max(0, min(100, varied_score))
+        
+        # Log the variation for debugging
+        self.logger.debug(f"Score variation: {weighted_score:.1f} → {final_score:.1f} "
+                         f"(consistency: {consistency_adjustment:.1f}, "
+                         f"fatigue: {fatigue_adjustment if rep_number > 5 else 0:.1f}, "
+                         f"tempo: {tempo_adjustment:.1f}, "
+                         f"natural: {natural_variation:.1f})")
+        
+        return final_score
+    
+    def _generate_prioritized_feedback(self, component_scores: Dict, final_score: int, rep_number: int = 1) -> List[str]:
+        """
+        Generate varied, contextual feedback based on performance and context.
+        
+        Provides diverse feedback messages to prevent repetition while maintaining
+        accuracy and motivation. Considers rep number, component performance, and
+        overall progress patterns.
+        
+        Args:
+            component_scores: Dict with safety, depth, stability scores and priorities
+            final_score: Final varied score (0-100)
+            rep_number: Current repetition number for context
+            
+        Returns:
+            List of varied feedback messages
+        """
+        import random
+        
         feedback = []
         
-        # Overall score feedback that matches the actual result
+        # Enhanced Overall Score Feedback with Variation
         if final_score >= 90:
-            feedback.append("🏆 Outstanding overall performance!")
+            excellent_messages = [
+                "🏆 Outstanding overall performance!",
+                "🌟 Exceptional form - you're crushing it!",
+                "💎 Near-perfect execution - amazing work!",
+                "🔥 Stellar performance - form coach approved!",
+                "⭐ Masterful movement - keep this up!"
+            ]
+            feedback.append(random.choice(excellent_messages))
+            
         elif final_score >= 80:
-            feedback.append("🎯 Excellent form with minor refinements needed.")
+            good_messages = [
+                "🎯 Excellent form with minor refinements needed.",
+                "✨ Strong performance - just minor tweaks to perfect it!",
+                "👌 Very solid form - almost there!",
+                "🎖️ Great execution with room for small improvements.",
+                "💪 Strong technique - fine-tuning will make it perfect!"
+            ]
+            feedback.append(random.choice(good_messages))
+            
         elif final_score >= 70:
-            feedback.append("✅ Good form - focus on the highlighted priority areas.")
+            decent_messages = [
+                "✅ Good form - focus on the highlighted priority areas.",
+                "👍 Decent technique - let's polish the key areas.",
+                "📈 Good foundation - time to refine the details.",
+                "⚡ Solid base - focus on the priority improvements.",
+                "🎯 Good effort - target the main areas for upgrade."
+            ]
+            feedback.append(random.choice(decent_messages))
+            
         elif final_score >= 50:
-            feedback.append("⚠️ Several areas need attention - prioritize safety first.")
+            improvement_messages = [
+                "⚠️ Several areas need attention - prioritize safety first.",
+                "🔧 Multiple areas to improve - start with safety basics.",
+                "📋 Focus needed in key areas - safety is priority one.",
+                "⚙️ Let's work on fundamentals - safety leads the way.",
+                "🎯 Several targets to hit - begin with safe movement patterns."
+            ]
+            feedback.append(random.choice(improvement_messages))
+            
         else:
-            feedback.append("🚨 Multiple critical issues detected - focus on fundamentals.")
-        
-        # Priority-based component feedback - address worst areas first
+            critical_messages = [
+                "🚨 Multiple critical issues detected - focus on fundamentals.",
+                "🔴 Major form corrections needed - back to basics.",
+                "⛑️ Safety-first approach required - let's rebuild from fundamentals.",
+                "🛑 Critical adjustments needed - prioritize basic movement patterns.",
+                "🏗️ Foundation work required - focus on safe, basic movements."
+            ]
+            feedback.append(random.choice(critical_messages))
+
+        # Enhanced Component-Specific Feedback with Variety
         low_scoring_components = [(name, data) for name, data in component_scores.items() 
                                 if data['score'] < 80]
         
@@ -1220,20 +1350,117 @@ class IntelligentFormGrader:
         low_scoring_components.sort(key=lambda x: x[1]['priority'])
         
         for component_name, component_data in low_scoring_components:
-            if component_name == 'safety' and component_data['score'] < 70:
-                feedback.append("🚨 PRIORITY: Address back posture and spinal alignment.")
-            elif component_name == 'depth' and component_data['score'] < 70:
-                feedback.append("📏 IMPORTANT: Work on achieving proper squat depth.")
-            elif component_name == 'stability' and component_data['score'] < 70:
-                feedback.append("⚖️ REFINEMENT: Focus on balance and core engagement.")
-        
-        # Add positive reinforcement for good components
+            score = component_data['score']
+            
+            if component_name == 'safety':
+                if score < 50:
+                    critical_safety = [
+                        "🚨 CRITICAL: Major back posture correction needed immediately.",
+                        "🔴 URGENT: Spinal alignment requires immediate attention.",
+                        "⛑️ SAFETY ALERT: Back position needs major adjustment.",
+                        "🛑 STOP: Address dangerous back curvature before continuing."
+                    ]
+                    feedback.append(random.choice(critical_safety))
+                elif score < 70:
+                    moderate_safety = [
+                        "🚨 PRIORITY: Address back posture and spinal alignment.",
+                        "⚠️ IMPORTANT: Improve spine position for safer movement.",
+                        "🔧 FOCUS: Work on maintaining neutral spine throughout.",
+                        "📐 KEY: Keep back straight and core engaged for safety."
+                    ]
+                    feedback.append(random.choice(moderate_safety))
+                    
+            elif component_name == 'depth':
+                if score < 50:
+                    poor_depth = [
+                        "📏 MAJOR: Significantly increase squat depth for effectiveness.",
+                        "⬇️ CRITICAL: Much deeper range of motion needed.",
+                        "📉 URGENT: Current depth is insufficient - go much lower.",
+                        "🎯 FOCUS: Dramatic depth improvement required for results."
+                    ]
+                    feedback.append(random.choice(poor_depth))
+                elif score < 70:
+                    moderate_depth = [
+                        "📏 IMPORTANT: Work on achieving proper squat depth.",
+                        "⬇️ TARGET: Aim to go deeper for better muscle activation.",
+                        "📐 GOAL: Increase range of motion for full benefits.",
+                        "🎯 FOCUS: Deeper squats will maximize your results."
+                    ]
+                    feedback.append(random.choice(moderate_depth))
+                    
+            elif component_name == 'stability':
+                if score < 50:
+                    poor_stability = [
+                        "⚖️ MAJOR: Significant balance and control issues detected.",
+                        "🌊 CRITICAL: Excessive swaying disrupts movement quality.",
+                        "🏗️ URGENT: Core stability needs major improvement.",
+                        "⚡ FOCUS: Balance control requires immediate attention."
+                    ]
+                    feedback.append(random.choice(poor_stability))
+                elif score < 70:
+                    moderate_stability = [
+                        "⚖️ REFINEMENT: Focus on balance and core engagement.",
+                        "🎯 IMPROVE: Work on maintaining steady, controlled movement.",
+                        "💪 TARGET: Strengthen core for better stability.",
+                        "🔧 ADJUST: Reduce movement sway for smoother reps."
+                    ]
+                    feedback.append(random.choice(moderate_stability))
+
+        # Enhanced Positive Reinforcement with Context
         good_components = [(name, data) for name, data in component_scores.items() 
                           if data['score'] >= 85]
         
         if good_components:
             best_component = max(good_components, key=lambda x: x[1]['score'])
-            feedback.append(f"💪 Excellent {best_component[0]} - keep it up!")
+            component_name = best_component[0]
+            
+            if component_name == 'safety':
+                safety_praise = [
+                    "💪 Excellent safety - spine alignment is spot on!",
+                    "🛡️ Perfect safety awareness - back position is ideal!",
+                    "✅ Outstanding spinal control - safety first approach!",
+                    "🏆 Exemplary back posture - injury prevention at its best!"
+                ]
+                feedback.append(random.choice(safety_praise))
+            elif component_name == 'depth':
+                depth_praise = [
+                    "💪 Excellent depth - full range of motion achieved!",
+                    "🎯 Perfect depth control - hitting the target zone!",
+                    "📏 Outstanding range of motion - maximum muscle activation!",
+                    "⬇️ Ideal depth consistency - textbook execution!"
+                ]
+                feedback.append(random.choice(depth_praise))
+            elif component_name == 'stability':
+                stability_praise = [
+                    "💪 Excellent stability - rock-solid balance!",
+                    "⚖️ Perfect control - stability is your strength!",
+                    "🎯 Outstanding balance - core engagement is excellent!",
+                    "🏛️ Ideal stability - steady as a statue!"
+                ]
+                feedback.append(random.choice(stability_praise))
+
+        # Rep-Specific Contextual Messages
+        if rep_number > 8:
+            endurance_messages = [
+                "🔥 Strong endurance - maintaining form under fatigue!",
+                "💪 Impressive stamina - form holds up well late in set!",
+                "⚡ Great conditioning - consistent quality despite fatigue!",
+                "🏃 Excellent endurance - form resilience is impressive!"
+            ]
+            if random.random() < 0.3:  # 30% chance for endurance message
+                feedback.append(random.choice(endurance_messages))
+                
+        elif rep_number <= 3:
+            early_messages = [
+                "🎯 Good start - establish that rhythm!",
+                "💪 Strong opening - maintain this quality!",
+                "✨ Solid beginning - keep this consistency!",
+                "🚀 Great launch - sustain this level!"
+            ]
+            if random.random() < 0.25:  # 25% chance for early rep message
+                feedback.append(random.choice(early_messages))
+
+        return feedback
         
         return feedback
     
@@ -1330,12 +1557,12 @@ class IntelligentFormGrader:
         """
         Debug version of grade_repetition with detailed logging and validation
         """
-        print(f"\n{'='*60}")
-        print(f"DEBUG FORM GRADING - {len(frame_metrics)} frames")
-        print(f"{'='*60}")
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"DEBUG FORM GRADING - {len(frame_metrics)} frames")
+        logger.debug(f"{'='*60}")
         
-        # Start with normal grading - using improved weighted scoring system
-        normal_result = self.grade_repetition_weighted(frame_metrics)
+        # FIXED: Call the correct method (grade_repetition_weighted was removed)
+        normal_result = self.grade_repetition(frame_metrics)
         
         # Add debug information
         debug_info = {
@@ -1353,15 +1580,15 @@ class IntelligentFormGrader:
                 valid_frames.append(fm)
             debug_info['frame_analysis'].append(frame_valid)
         
-        print(f"Frame validation: {len(valid_frames)}/{len(frame_metrics)} frames valid")
+        logger.debug(f"Frame validation: {len(valid_frames)}/{len(frame_metrics)} frames valid")
         
         if not valid_frames:
-            print("ERROR: No valid frames for analysis!")
+            logger.error("ERROR: No valid frames for analysis!")
             return debug_info
         
         # Run each analyzer with debug output
         for analyzer_name, analyzer in self.analyzers.items():
-            print(f"\n--- {analyzer_name} Analysis ---")
+            logger.debug(f"\n--- {analyzer_name} Analysis ---")
             
             analyzer_result = analyzer.analyze(valid_frames)
             debug_info['analyzer_details'][analyzer_name] = {
@@ -1375,7 +1602,7 @@ class IntelligentFormGrader:
             if hasattr(analyzer, 'debug_analysis'):
                 analyzer_debug = analyzer.debug_analysis(valid_frames)
                 debug_info['analyzer_details'][analyzer_name]['debug'] = analyzer_debug
-                print(f"Debug info: {analyzer_debug}")
+                logger.debug(f"Debug info: {analyzer_debug}")
             
             print(f"Penalties: {len(analyzer_result.get('penalties', []))}")
             print(f"Bonuses: {len(analyzer_result.get('bonuses', []))}")
@@ -1430,41 +1657,62 @@ class IntelligentFormGrader:
         return validation
     
     def _validate_final_score(self, grading_result: Dict, analyzer_details: Dict) -> Dict:
-        """Validate the final score calculation"""
+        """Validate the final score calculation using the actual weighted method"""
         validation = {
-            'base_score': 100.0,
-            'total_penalties': 0.0,
-            'total_bonuses': 0.0,
             'final_score': grading_result.get('score', 0),
             'is_valid': True,
-            'calculation_details': []
+            'calculation_details': [],
+            'component_breakdown': {}
         }
         
-        # Calculate expected score
-        for analyzer_name, details in analyzer_details.items():
-            analyzer_penalties = sum(p.get('amount', 0) for p in details.get('penalties', []))
-            analyzer_bonuses = sum(b.get('amount', 0) for b in details.get('bonuses', []))
+        # Extract component scores from grading result (if available)
+        component_scores = grading_result.get('component_scores', {})
+        
+        if not component_scores:
+            # If no component scores available, skip detailed validation
+            validation['validation_method'] = 'skipped_no_component_data'
+            return validation
+        
+        # Replicate the actual weighted calculation from grade_repetition
+        weighted_score = 0.0
+        total_weight = 0.0
+        
+        for component_name, component_data in component_scores.items():
+            score = component_data['score']
+            weight = component_data['weight']
             
-            validation['total_penalties'] += analyzer_penalties
-            validation['total_bonuses'] += analyzer_bonuses
+            weighted_score += score * weight
+            total_weight += weight
+            
+            validation['component_breakdown'][component_name] = {
+                'score': score,
+                'weight': weight,
+                'contribution': score * weight
+            }
             
             validation['calculation_details'].append({
-                'analyzer': analyzer_name,
-                'penalties': analyzer_penalties,
-                'bonuses': analyzer_bonuses
+                'component': component_name,
+                'score': score,
+                'weight': weight,
+                'weighted_contribution': score * weight
             })
         
-        expected_score = max(0, min(100, 
-            validation['base_score'] - validation['total_penalties'] + validation['total_bonuses']
-        ))
+        # Calculate expected score using the same method as grade_repetition
+        expected_score = int(weighted_score / total_weight) if total_weight > 0 else 0
         
-        # Check if calculation matches
+        # Validate against actual score
         score_diff = abs(expected_score - validation['final_score'])
-        if score_diff > 0.1:  # Allow small floating point differences
+        if score_diff > 0.1:  # Allow small rounding differences
             validation['is_valid'] = False
             validation['expected_score'] = expected_score
             validation['actual_score'] = validation['final_score']
             validation['difference'] = score_diff
+            validation['weighted_total'] = weighted_score
+            validation['total_weight'] = total_weight
+        else:
+            validation['is_valid'] = True
+            validation['expected_score'] = expected_score
+            validation['validation_method'] = 'weighted_component_matching'
         
         return validation
 

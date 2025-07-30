@@ -309,14 +309,21 @@ class MainWindow(QMainWindow):
         print(f"DEBUG: Displaying rep analysis - Score: {score}%, Feedback: {feedback}")
         
         self.form_score_label.setText(f"{score}%")
-        self.feedback_display.setHtml("<br>".join(f"• {item}" for item in feedback))
+        
+        # Display feedback with better formatting
+        if feedback:
+            feedback_html = "<br>".join(f"• {item}" for item in feedback[:5])  # Limit to 5 items
+            self.feedback_display.setHtml(feedback_html)
+        else:
+            self.feedback_display.setPlainText("Analysis complete - no specific feedback.")
 
+        # Color-code the score with font weight
         if score >= 85: 
-            self.form_score_label.setStyleSheet("color: #4CAF50;")  # Green
+            self.form_score_label.setStyleSheet("color: #4CAF50; font-weight: bold;")  # Green
         elif score >= 60: 
-            self.form_score_label.setStyleSheet("color: #FFC107;")  # Amber
+            self.form_score_label.setStyleSheet("color: #FFC107; font-weight: bold;")  # Amber
         else: 
-            self.form_score_label.setStyleSheet("color: #F44336;")  # Red
+            self.form_score_label.setStyleSheet("color: #F44336; font-weight: bold;")  # Red
         
         self.rep_analysis_display_timer.start(7000)
 

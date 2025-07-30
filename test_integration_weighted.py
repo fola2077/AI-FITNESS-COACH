@@ -86,12 +86,12 @@ def test_pose_processor_integration():
         test_metrics = create_test_metrics("excellent_form")
         
         # Simulate what PoseProcessor does
-        result = form_grader.grade_repetition_weighted(test_metrics)
+        result = form_grader.grade_repetition(test_metrics)
         
         print(f"✅ PoseProcessor integration test passed")
         print(f"   - Score: {result['score']}%")
         print(f"   - Weighted scoring: {'✅' if 'component_scores' in result else '❌'}")
-        print(f"   - Prioritized feedback: {'✅' if 'prioritized_feedback' in result else '❌'}")
+        print(f"   - Enhanced feedback: {'✅' if 'feedback' in result else '❌'}")
         
         return True
         
@@ -168,7 +168,7 @@ def test_scoring_consistency():
         # Test multiple runs for consistency
         scores = []
         for i in range(3):
-            result = form_grader.grade_repetition_weighted(test_metrics)
+            result = form_grader.grade_repetition(test_metrics)
             scores.append(result['score'])
             
             # Reset session state to prevent adaptive behavior
