@@ -12,7 +12,7 @@ class FormGraderWorker(QObject):
     @Slot()
     def run(self):
         try:
-            result = self.form_grader.grade_repetition(self.frame_metrics)
+            result = self.form_grader.grade_repetition_weighted(self.frame_metrics)
             self.grading_finished.emit(result)
         except Exception as e:
             self.grading_failed.emit(str(e))

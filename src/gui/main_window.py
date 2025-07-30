@@ -105,6 +105,13 @@ class MainWindow(QMainWindow):
         view_menu = menubar.addMenu('View')
         show_report_action = QAction('Session Report...', self, triggered=self.show_session_report)
         view_menu.addAction(show_report_action)
+        
+        # Debug menu for validation
+        debug_menu = menubar.addMenu('Debug')
+        self.validation_action = QAction('Enable Validation Mode', self, checkable=True)
+        self.validation_action.setChecked(False)
+        self.validation_action.triggered.connect(self.toggle_validation_mode)
+        debug_menu.addAction(self.validation_action)
 
     def _create_video_panel(self):
         """Creates the left panel containing the video feed and controls."""
@@ -335,12 +342,46 @@ class MainWindow(QMainWindow):
         
         dialog = SessionReportDialog(report_data, self)
         dialog.exec()
+    
+    def toggle_validation_mode(self, enabled):
+        """Toggle validation mode for debugging pose analysis"""
+        try:
+            # Recreate PoseProcessor with validation enabled/disabled
+            self.pose_processor = PoseProcessor(
+                user_profile=self.user_profile,
+                enable_validation=enabled
+            )
+            
+            status_text = "Validation mode enabled - Debug output will be shown in console" if enabled else "Validation mode disabled"
+            self.status_bar.showMessage(status_text, 3000)
+            
+            print(f"🔧 Validation mode {'enabled' if enabled else 'disabled'}")
+            
+        except Exception as e:
+            print(f"Error toggling validation mode: {e}")
+            self.validation_action.setChecked(not enabled)  # Revert checkbox state
 
     def closeEvent(self, event):
         """Handles the application close event."""
         self.stop_session()
         self.config_manager.save_ui_settings({'window_width': self.width(), 'window_height': self.height()})
         event.accept()
+    
+    def toggle_validation_mode(self, enabled: bool):
+        """Toggle validation mode on/off"""
+        print(f"🔍 Validation mode {'enabled' if enabled else 'disabled'}")
+        
+        # Recreate PoseProcessor with validation enabled/disabled
+        self.pose_processor = PoseProcessor(
+            user_profile=self.user_profile, 
+            enable_validation=enabled
+        )
+        
+        # Update UI to show validation status
+        if enabled:
+            self.status_bar.showMessage("🔍 VALIDATION MODE ACTIVE - Debug output enabled")
+        else:
+            self.status_bar.showMessage("Ready - Select a source to start a session")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

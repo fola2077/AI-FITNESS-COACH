@@ -14,6 +14,7 @@ from src.grading.advanced_form_grader import (
 )
 from src.gui.widgets.session_report import SessionManager
 from src.utils.rep_counter import RepCounter, MovementPhase
+from src.validation.pose_validation import PoseValidationSystem
 from enum import Enum
 
 class SessionState(Enum):
@@ -24,7 +25,7 @@ class SessionState(Enum):
     PAUSED = "paused"
 
 class PoseProcessor:
-    def __init__(self, user_profile: UserProfile = None):
+    def __init__(self, user_profile: UserProfile = None, enable_validation: bool = False):
         self.pose_detector = PoseDetector()
         self.feedback_manager = FeedbackManager()
         self.session_manager = SessionManager()
@@ -32,6 +33,10 @@ class PoseProcessor:
 
         self.user_profile = user_profile or UserProfile(user_id="default_user", skill_level=UserLevel.INTERMEDIATE)
         self.form_grader = IntelligentFormGrader(self.user_profile)
+        
+        # Validation system (optional for debugging)
+        self.enable_validation = enable_validation
+        self.validation_system = PoseValidationSystem() if enable_validation else None
 
         self.settings = {
             'show_skeleton': True,
@@ -46,6 +51,7 @@ class PoseProcessor:
         print("🔄 Processor reset for new session.")
         self.rep_counter.reset()
         self.session_manager.reset_session()
+        self.form_grader.reset_workout_session()  # Full reset for new workout session
         self.session_state = SessionState.STOPPED
         self.current_rep_metrics = []
         self.last_rep_analysis = {}
@@ -196,8 +202,37 @@ class PoseProcessor:
             frame_metrics = self.current_rep_metrics
             print(f"🔄 Processing completed rep {self.rep_counter.rep_count} with {len(frame_metrics)} metrics.")
             
-            # Grade the repetition
-            self.last_rep_analysis = self.form_grader.grade_repetition(frame_metrics)
+            # Run validation if enabled
+            # Reset form grader state for fresh analysis of each rep
+            self.form_grader.reset_session_state()
+            
+            if self.enable_validation and self.validation_system:
+                print(f"\n{'='*60}")
+                print(f"🔍 VALIDATION MODE - Rep {self.rep_counter.rep_count}")
+                print(f"{'='*60}")
+                
+                # Validate the frame metrics
+                validation_results = self.validation_system.validate_rep_analysis(
+                    frame_metrics, self.pose_detector, self.form_grader
+                )
+                
+                # Print validation summary
+                print(f"Validation Results:")
+                print(f"- Landmark validation: {'✅ PASS' if validation_results['landmarks']['is_valid'] else '❌ FAIL'}")
+                print(f"- Angle validation: {'✅ PASS' if validation_results['angles']['is_valid'] else '❌ FAIL'}")
+                print(f"- Metrics validation: {'✅ PASS' if validation_results['biomechanics']['is_valid'] else '❌ FAIL'}")
+                
+                # Use debug grading if validation is enabled
+                debug_results = self.form_grader.debug_grade_repetition(frame_metrics)
+                self.last_rep_analysis = debug_results['normal_result']
+                
+                # Store debug info for analysis
+                self.last_rep_analysis['debug_info'] = debug_results
+                self.last_rep_analysis['validation_results'] = validation_results
+                
+            else:
+                # Standard grading - using improved weighted scoring system
+                self.last_rep_analysis = self.form_grader.grade_repetition_weighted(frame_metrics)
             
             # Add timestamp for UI tracking
             self.last_rep_analysis['timestamp'] = time.time()
@@ -213,6 +248,8 @@ class PoseProcessor:
 
         except Exception as e:
             print(f"⚠️ Error in rep analysis: {e}")
+            import traceback
+            traceback.print_exc()
             self.last_rep_analysis = {
                 'score': 0, 
                 'feedback': ['Analysis failed.'],

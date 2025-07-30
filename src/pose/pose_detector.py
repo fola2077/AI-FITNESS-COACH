@@ -187,10 +187,18 @@ class PoseDetector:
             )
             angles['hip'] = (left_hip_angle + right_hip_angle) / 2
             
-            # Back angle (shoulder-hip-knee, indicates forward lean)
-            angles['back'] = self.calculate_angle(
-                landmarks[LEFT_SHOULDER], landmarks[LEFT_HIP], landmarks[LEFT_KNEE]
-            )
+            # Back angle - measure spine orientation using shoulder and hip midpoints
+            # Calculate midpoints
+            shoulder_mid_x = (landmarks[LEFT_SHOULDER].x + landmarks[RIGHT_SHOULDER].x) / 2
+            shoulder_mid_y = (landmarks[LEFT_SHOULDER].y + landmarks[RIGHT_SHOULDER].y) / 2
+            hip_mid_x = (landmarks[LEFT_HIP].x + landmarks[RIGHT_HIP].x) / 2
+            hip_mid_y = (landmarks[LEFT_HIP].y + landmarks[RIGHT_HIP].y) / 2
+            
+            # Calculate back angle from vertical (180 degrees = perfectly upright)
+            dx = hip_mid_x - shoulder_mid_x
+            dy = hip_mid_y - shoulder_mid_y
+            back_angle_rad = math.atan2(abs(dx), abs(dy))
+            angles['back'] = math.degrees(back_angle_rad) + 90  # Convert to degrees, 180 = upright
             
             # Ankle angles
             angles['ankle_left'] = self.calculate_angle(
