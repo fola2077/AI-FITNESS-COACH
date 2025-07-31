@@ -1,0 +1,113 @@
+{
+  "squat_0918_squat_000064_20250731_005050": {
+    "file_path": "C:\\Users\\KAMI\\Downloads\\AI-FITNESS-COACH\\0918_squat_000064.mp4",
+    "file_size": 7091821,
+    "duration": 10.344827586206897,
+    "fps": 29,
+    "resolution": [
+      1080,
+      1920
+    ],
+    "exercise_type": "squat",
+    "difficulty_level": "intermediate",
+    "camera_angle": "unknown",
+    "lighting_quality": "unknown",
+    "human_scores": [
+      {
+        "overall_score": 78.5,
+        "safety_score": 85.0,
+        "depth_score": 70.0,
+        "stability_score": 80.0,
+        "rep_count": 8,
+        "major_faults": [
+          "INSUFFICIENT_DEPTH"
+        ],
+        "minor_faults": [
+          "SLIGHT_INSTABILITY"
+        ],
+        "expert_name": "Expert_A",
+        "scoring_date": "2025-07-31T00:50:51.054542",
+        "confidence": 90.0,
+        "notes": "Good form overall, needs slightly deeper squats"
+      }
+    ],
+    "consensus_score": null,
+    "ai_score": 78.5,
+    "ai_analysis": {
+      "overall_score": 78.5,
+      "component_scores": {
+        "safety": 85.2,
+        "depth": 72.1,
+        "stability": 77.9
+      },
+      "faults_detected": [
+        "INSUFFICIENT_DEPTH",
+        "MINOR_INSTABILITY"
+      ],
+      "rep_count": 8,
+      "analysis_timestamp": "2025-07-31T00:50:59.032607",
+      "difficulty_used": "casual",
+      "processing_notes": "Mock analysis - replace with real pose processing"
+    },
+    "creation_date": "2025-07-31T00:50:51.026214",
+    "last_updated": "2025-07-31T00:50:59.032607",
+    "validation_status": "validated",
+    "tags": []
+  },
+  "squat_0922_squat_000003_20250731_005051": {
+    "file_path": "C:\\Users\\KAMI\\Downloads\\AI-FITNESS-COACH\\0922_squat_000003.mp4",
+    "file_size": 1873617,
+    "duration": 10.344827586206897,
+    "fps": 29,
+    "resolution": [
+      720,
+      1280
+    ],
+    "exercise_type": "squat",
+    "difficulty_level": "intermediate",
+    "camera_angle": "unknown",
+    "lighting_quality": "unknown",
+    "human_scores": [
+      {
+        "overall_score": 65.2,
+        "safety_score": 60.0,
+        "depth_score": 75.0,
+        "stability_score": 60.0,
+        "rep_count": 6,
+        "major_faults": [
+          "BACK_ROUNDING",
+          "POOR_STABILITY"
+        ],
+        "minor_faults": [
+          "INCONSISTENT_DEPTH"
+        ],
+        "expert_name": "Expert_B",
+        "scoring_date": "2025-07-31T00:50:51.054965",
+        "confidence": 85.0,
+        "notes": "Safety concerns with back posture, unstable throughout movement"
+      }
+    ],
+    "consensus_score": null,
+    "ai_score": 78.5,
+    "ai_analysis": {
+      "overall_score": 78.5,
+      "component_scores": {
+        "safety": 85.2,
+        "depth": 72.1,
+        "stability": 77.9
+      },
+      "faults_detected": [
+        "INSUFFICIENT_DEPTH",
+        "MINOR_INSTABILITY"
+      ],
+      "rep_count": 8,
+      "analysis_timestamp": "2025-07-31T00:51:04.476583",
+      "difficulty_used": "casual",
+      "processing_notes": "Mock analysis - replace with real pose processing"
+    },
+    "creation_date": "2025-07-31T00:50:51.053172",
+    "last_updated": "2025-07-31T00:51:04.476583",
+    "validation_status": "validated",
+    "tags": []
+  }
+}

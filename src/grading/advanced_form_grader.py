@@ -462,12 +462,14 @@ class SafetyAnalyzer(BaseAnalyzer):
         
         # CONSISTENT: Fixed thresholds for all reps
         # Back angle ranges: 180° = perfectly upright, 90° = horizontal
-        if min_back_angle < self.SEVERE_BACK_ROUNDING_THRESHOLD:  # < 70° - very dangerous
+        if min_back_angle < self.SEVERE_BACK_ROUNDING_THRESHOLD:  # < 60° - very dangerous
             faults.append('SEVERE_BACK_ROUNDING')
-            penalty_amount = 40 + (self.SEVERE_BACK_ROUNDING_THRESHOLD - min_back_angle) * 1.5
+            # More severe penalty for dangerous postures
+            # Base penalty 60, plus 3 points per degree below threshold
+            penalty_amount = 60 + (self.SEVERE_BACK_ROUNDING_THRESHOLD - min_back_angle) * 3.0
             penalties.append({
                 'reason': 'Severe Back Rounding - DANGER!', 
-                'amount': min(50, penalty_amount),
+                'amount': min(75, penalty_amount),  # Increased cap to 75
                 'metric_value': min_back_angle
             })
         elif min_back_angle < self.MODERATE_BACK_ROUNDING_THRESHOLD:  # < 90° - excessive lean
@@ -594,7 +596,7 @@ class DepthAnalyzer(BaseAnalyzer):
         # Check for partial reps first - even more sensitive detection
         if movement_range < 50:  # Increased from 40° - broader detection
             faults.append('PARTIAL_REP')
-            penalties.append({'reason': f'Partial Rep ({movement_range:.1f}° range)', 'amount': 45})
+            penalties.append({'reason': f'Partial Rep ({movement_range:.1f}° range)', 'amount': 50})
             # Also check if it's very shallow (don't return early)
             if min_knee_angle > 120:
                 faults.append('VERY_SHALLOW')
@@ -1094,7 +1096,8 @@ class IntelligentFormGrader:
                 'scoring_method': 'balanced_multi_component'
             }
         
-        logger.info(f"FormGrader: BALANCED ANALYSIS - Rep #{len(self.recent_scores) + 1}")
+        rep_number = len(self.recent_scores) + 1
+        logger.info(f"FormGrader: BALANCED ANALYSIS - Rep #{rep_number}")
         
         # Calculate component scores separately - each gets independent assessment
         component_scores = {}
@@ -1150,30 +1153,19 @@ class IntelligentFormGrader:
         
         base_score = weighted_score / total_weight if total_weight > 0 else 0
         
-        # ENHANCEMENT: Add realistic human movement variation
-        # Create pose_data and rep_data for variation calculation
-        pose_data = {
-            'landmarks': frame_metrics[-1].landmark_visibility if frame_metrics else 0.0,
-            'frame_count': len(frame_metrics)
-        }
-        rep_data = {
-            'rep_number': len(self.recent_scores) + 1,  # Current rep number
-            'timing': len(frame_metrics) * 0.033,  # Approximate duration in seconds
-            'sequence_data': frame_metrics
-        }
-        
-        # Apply realistic variation to the base weighted score
-        final_score = int(self._add_realistic_variation(base_score, pose_data, rep_data))
+        # ENHANCEMENT: Add data-driven variation based on actual movement quality
+        final_score = int(self._add_realistic_variation(base_score, frame_metrics, rep_number))
         
         # Generate varied, contextual feedback
-        feedback = self._generate_prioritized_feedback(component_scores, final_score, rep_data['rep_number'])
+        feedback = self._generate_prioritized_feedback(component_scores, final_score, rep_number)
         
-        logger.info(f"FormGrader: SCORE: {base_score:.1f}% → {final_score}% (after variation)")
+        logger.info(f"FormGrader: SCORE: {base_score:.1f}% → {final_score}% (after data-driven variation)")
         
         self.recent_scores.append(final_score)
         
         return {
             'score': final_score,
+            'base_score': base_score,  # FIXED: Include base score for validation
             'faults': all_faults,
             'feedback': feedback,
             'component_scores': component_scores,
@@ -1196,78 +1188,181 @@ class IntelligentFormGrader:
         
         return max(0, min(100, score))
     
-    def _add_realistic_variation(self, weighted_score: float, pose_data: Dict, rep_data: Dict) -> float:
+    def _add_realistic_variation(self, base_score: float, frame_metrics: List, rep_number: int) -> float:
         """
-        Add realistic variation to scores based on human movement factors.
+        Add DATA-DRIVEN variation based on actual movement quality analysis.
         
-        Simulates natural human movement inconsistencies including:
-        - Movement consistency (how stable the movement pattern is)
-        - Fatigue effects (slight degradation over time)
-        - Tempo variations (movement speed changes)
-        - Controlled randomness (small natural variations)
+        Instead of simulating variation with random numbers, this calculates real metrics 
+        from the user's actual movement data to adjust scores based on genuine performance factors.
+        
+        Real Analysis Factors:
+        - Movement consistency: Calculated from joint angle variability (CV = std/mean)
+        - Tempo quality: Based on actual movement phases and timing
+        - Stability assessment: Uses real center-of-mass sway measurements  
+        - Fatigue detection: Analyzes actual score trends from recent performance
+        - Smoothness metrics: Calculates movement jerk from position data
         
         Args:
-            weighted_score: Base weighted score from analyzers
-            pose_data: Current pose data with landmarks
-            rep_data: Repetition data including timing and sequence
+            base_score: Base weighted score from analyzers
+            frame_metrics: Actual movement data from the user's performance
+            rep_number: Current repetition number for fatigue analysis
             
         Returns:
-            Adjusted score with realistic human variation
+            Adjusted score based on real movement quality factors
         """
-        import random
         import math
+        import numpy as np
         
-        # Base variation factor (start with the weighted score)
-        varied_score = weighted_score
+        # Start with base score
+        varied_score = base_score
+        variation_factors = []
         
-        # Factor 1: Movement Consistency Variation (-2 to +1 points)
-        # Simulate how consistent the movement pattern is
-        consistency_factor = random.uniform(0.75, 1.01)  # 75% to 101% consistency
-        consistency_adjustment = (consistency_factor - 0.9) * 10  # -1.5 to +1.1 points
-        varied_score += consistency_adjustment
+        # Factor 1: REAL Movement Consistency Analysis
+        if len(frame_metrics) > 10:
+            # Analyze actual knee angle consistency throughout the movement
+            knee_angles = [fm.knee_angle_left for fm in frame_metrics if fm.knee_angle_left > 0]
+            if knee_angles and len(knee_angles) > 5:
+                # Calculate coefficient of variation (std/mean) for consistency
+                mean_angle = np.mean(knee_angles)
+                std_angle = np.std(knee_angles)
+                cv = std_angle / mean_angle if mean_angle > 0 else 0
+                
+                # Convert to consistency score: lower CV = higher consistency
+                consistency_score = max(0, 1.0 - (cv * 2))  # CV > 0.5 = poor consistency
+                
+                # Apply consistency adjustment based on real data
+                if consistency_score < 0.7:  # Poor consistency (CV > 0.15)
+                    consistency_adjustment = -3 * (0.7 - consistency_score)  # Up to -3 points
+                elif consistency_score > 0.9:  # Excellent consistency (CV < 0.05)
+                    consistency_adjustment = 2 * (consistency_score - 0.9) * 10  # Up to +2 points
+                else:
+                    consistency_adjustment = 0
+                    
+                variation_factors.append(consistency_adjustment)
+                self.logger.debug(f"Movement consistency: CV={cv:.3f}, score={consistency_score:.3f}, adj={consistency_adjustment:.1f}")
         
-        # Factor 2: Fatigue Simulation (-1 to 0 points after rep 5)
-        # Simulate slight performance degradation with fatigue
-        rep_number = rep_data.get('rep_number', 1)
-        if rep_number > 5:
-            fatigue_factor = min(0.02 * (rep_number - 5), 0.04)  # Max 4% degradation
-            fatigue_adjustment = -fatigue_factor * weighted_score
-            varied_score += fatigue_adjustment
+        # Factor 2: REAL Tempo Analysis from Movement Data
+        if len(frame_metrics) > 15:
+            rep_duration = len(frame_metrics) / 30.0  # Convert frames to seconds (30 FPS)
             
-        # Factor 3: Tempo Variation (-1 to +1 points)
-        # Simulate effects of movement speed on form quality
-        tempo_variation = random.uniform(-0.015, 0.015)  # ±1.5% variation
-        tempo_adjustment = tempo_variation * weighted_score
-        varied_score += tempo_adjustment
+            # Analyze movement phases from actual data
+            knee_angles = [fm.knee_angle_left for fm in frame_metrics if fm.knee_angle_left > 0]
+            if knee_angles:
+                # Find descent and ascent phases
+                min_angle_frame = knee_angles.index(min(knee_angles))
+                descent_duration = (min_angle_frame / len(knee_angles)) * rep_duration
+                ascent_duration = ((len(knee_angles) - min_angle_frame) / len(knee_angles)) * rep_duration
+                
+                # Optimal tempo ranges based on biomechanics research
+                optimal_total = (2.0, 4.0)  # 2-4 seconds total
+                optimal_descent = (1.0, 2.5)  # 1-2.5 seconds descent
+                
+                tempo_adjustment = 0
+                
+                # Total duration analysis
+                if rep_duration < optimal_total[0]:  # Too fast
+                    tempo_adjustment -= (optimal_total[0] - rep_duration) * 2  # -2 per second under
+                elif rep_duration > optimal_total[1]:  # Too slow
+                    tempo_adjustment -= (rep_duration - optimal_total[1]) * 1  # -1 per second over
+                elif optimal_total[0] <= rep_duration <= optimal_total[1]:  # Perfect
+                    tempo_adjustment += 1  # Bonus for optimal timing
+                
+                # Descent phase analysis
+                if descent_duration > optimal_descent[1]:  # Descent too slow
+                    tempo_adjustment -= 0.5
+                elif descent_duration < optimal_descent[0]:  # Descent too fast
+                    tempo_adjustment -= 1
+                    
+                variation_factors.append(tempo_adjustment)
+                self.logger.debug(f"Tempo analysis: total={rep_duration:.1f}s, descent={descent_duration:.1f}s, adj={tempo_adjustment:.1f}")
         
-        # Factor 4: Natural Human Randomness (-1 to +1 points)
-        # Small random variations that occur in all human movement
-        natural_variation = random.uniform(-1.2, 1.2)
-        varied_score += natural_variation
+        # Factor 3: REAL Stability Analysis from Center of Mass Data
+        if len(frame_metrics) > 10:
+            com_x_values = [fm.center_of_mass_x for fm in frame_metrics]
+            com_y_values = [fm.center_of_mass_y for fm in frame_metrics]
+            
+            if com_x_values and com_y_values:
+                # Calculate actual postural sway
+                x_sway = np.std(com_x_values)
+                y_sway = np.std(com_y_values)
+                total_sway = math.sqrt(x_sway**2 + y_sway**2)
+                
+                # Stability thresholds based on research
+                excellent_sway = 0.01   # Very stable
+                poor_sway = 0.05       # Unstable
+                
+                if total_sway > poor_sway:  # Poor stability
+                    stability_adjustment = -2 - min(3, (total_sway - poor_sway) * 100)
+                elif total_sway < excellent_sway:  # Excellent stability
+                    stability_adjustment = 1.5
+                else:  # Normal range
+                    stability_adjustment = 0
+                    
+                variation_factors.append(stability_adjustment)
+                self.logger.debug(f"Stability analysis: sway={total_sway:.4f}, adj={stability_adjustment:.1f}")
         
-        # Factor 5: Form Stability Bonus (0 to +1 points)
-        # Reward consistently good form with small bonuses
-        if weighted_score >= 85:
-            stability_bonus = random.uniform(0, 1.0)
-            varied_score += stability_bonus
+        # Factor 4: REAL Fatigue Analysis Based on Rep History
+        if rep_number > 3 and len(self.recent_scores) >= 3:
+            # Calculate actual performance decline trend
+            recent_scores = list(self.recent_scores)[-3:]  # Last 3 scores
+            if len(recent_scores) >= 3:
+                # Linear regression to detect declining trend
+                x_vals = list(range(len(recent_scores)))
+                slope = np.polyfit(x_vals, recent_scores, 1)[0]  # Linear trend
+                
+                # If scores are declining (negative slope), apply fatigue penalty
+                if slope < -2:  # Declining more than 2 points per rep
+                    fatigue_adjustment = min(-1, slope / 2)  # Progressive penalty
+                    variation_factors.append(fatigue_adjustment)
+                    self.logger.debug(f"Fatigue detected: slope={slope:.2f}, adj={fatigue_adjustment:.1f}")
+                elif slope > 1:  # Improving performance (learning effect)
+                    improvement_bonus = min(1, slope / 3)
+                    variation_factors.append(improvement_bonus)
+                    self.logger.debug(f"Improvement detected: slope={slope:.2f}, adj={improvement_bonus:.1f}")
         
-        # Apply realistic bounds and ensure score makes sense
-        # Prevent unrealistic jumps while allowing natural variation
-        max_change = 4.0  # Maximum total change from base score
-        change_amount = varied_score - weighted_score
-        if abs(change_amount) > max_change:
-            change_amount = max_change if change_amount > 0 else -max_change
-            varied_score = weighted_score + change_amount
+        # Factor 5: REAL Smoothness Analysis from Movement Jerk
+        if len(frame_metrics) > 5:
+            # Calculate movement smoothness from velocity changes
+            positions = [(fm.center_of_mass_x, fm.center_of_mass_y) for fm in frame_metrics]
+            if len(positions) > 3:
+                # Calculate velocities and accelerations
+                velocities = []
+                for i in range(1, len(positions)):
+                    dx = positions[i][0] - positions[i-1][0]
+                    dy = positions[i][1] - positions[i-1][1]
+                    velocity = math.sqrt(dx**2 + dy**2)
+                    velocities.append(velocity)
+                
+                # Calculate jerk (rate of change of acceleration)
+                if len(velocities) > 2:
+                    jerks = []
+                    for i in range(2, len(velocities)):
+                        jerk = abs(velocities[i] - 2*velocities[i-1] + velocities[i-2])
+                        jerks.append(jerk)
+                    
+                    if jerks:
+                        avg_jerk = np.mean(jerks)
+                        # Smooth movement has low jerk
+                        if avg_jerk < 0.001:  # Very smooth
+                            smoothness_adjustment = 1
+                        elif avg_jerk > 0.01:  # Jerky movement
+                            smoothness_adjustment = -2
+                        else:
+                            smoothness_adjustment = 0
+                            
+                        variation_factors.append(smoothness_adjustment)
+                        self.logger.debug(f"Smoothness analysis: jerk={avg_jerk:.4f}, adj={smoothness_adjustment:.1f}")
         
-        # Ensure final score stays within realistic bounds
+        # Apply all variation factors
+        total_variation = sum(variation_factors)
+        varied_score += total_variation
+        
+        # Ensure realistic bounds
         final_score = max(0, min(100, varied_score))
         
-        # Log the variation for debugging
-        self.logger.debug(f"Score variation: {weighted_score:.1f} → {final_score:.1f} "
-                         f"(consistency: {consistency_adjustment:.1f}, "
-                         f"fatigue: {fatigue_adjustment if rep_number > 5 else 0:.1f}, "
-                         f"tempo: {tempo_adjustment:.1f}, "
-                         f"natural: {natural_variation:.1f})")
+        if variation_factors:
+            self.logger.debug(f"DATA-DRIVEN Score variation: {base_score:.1f} → {final_score:.1f} "
+                             f"(factors: {[f'{f:.1f}' for f in variation_factors]})")
         
         return final_score
     
@@ -1657,23 +1752,31 @@ class IntelligentFormGrader:
         return validation
     
     def _validate_final_score(self, grading_result: Dict, analyzer_details: Dict) -> Dict:
-        """Validate the final score calculation using the actual weighted method"""
+        """
+        FIXED: Validate the base score calculation (before variation is applied)
+        
+        This validates that the weighted averaging calculation is correct,
+        not the final score which includes data-driven variation.
+        
+        The mismatch was: final_score = base_score + variation, but we were
+        comparing final_score to expected_base_score, which will always differ.
+        """
         validation = {
             'final_score': grading_result.get('score', 0),
+            'base_score': grading_result.get('base_score', 0),  # FIXED: Validate base score
             'is_valid': True,
             'calculation_details': [],
             'component_breakdown': {}
         }
         
-        # Extract component scores from grading result (if available)
+        # Extract component scores from grading result
         component_scores = grading_result.get('component_scores', {})
         
         if not component_scores:
-            # If no component scores available, skip detailed validation
             validation['validation_method'] = 'skipped_no_component_data'
             return validation
         
-        # Replicate the actual weighted calculation from grade_repetition
+        # Replicate the exact weighted calculation from grade_repetition
         weighted_score = 0.0
         total_weight = 0.0
         
@@ -1697,22 +1800,39 @@ class IntelligentFormGrader:
                 'weighted_contribution': score * weight
             })
         
-        # Calculate expected score using the same method as grade_repetition
-        expected_score = int(weighted_score / total_weight) if total_weight > 0 else 0
+        # Calculate expected base score (before variation)
+        expected_base_score = weighted_score / total_weight if total_weight > 0 else 0
         
-        # Validate against actual score
-        score_diff = abs(expected_score - validation['final_score'])
+        # FIXED: Validate against base score, not final score
+        actual_base_score = validation['base_score']
+        score_diff = abs(expected_base_score - actual_base_score)
+        
         if score_diff > 0.1:  # Allow small rounding differences
             validation['is_valid'] = False
-            validation['expected_score'] = expected_score
-            validation['actual_score'] = validation['final_score']
+            validation['expected_base_score'] = expected_base_score
+            validation['actual_base_score'] = actual_base_score
             validation['difference'] = score_diff
-            validation['weighted_total'] = weighted_score
-            validation['total_weight'] = total_weight
+            validation['error'] = 'base_score_calculation_mismatch'
         else:
             validation['is_valid'] = True
-            validation['expected_score'] = expected_score
-            validation['validation_method'] = 'weighted_component_matching'
+            validation['expected_base_score'] = expected_base_score
+            validation['validation_method'] = 'base_score_weighted_component_matching'
+        
+        # Also validate that variation was applied correctly
+        variation_applied = validation['final_score'] - validation['base_score']
+        validation['variation_applied'] = variation_applied
+        validation['variation_reasonable'] = abs(variation_applied) <= 8  # Max ±8 points variation
+        
+        if not validation['variation_reasonable']:
+            validation['variation_warning'] = f'Large variation applied: {variation_applied:.1f} points'
+        
+        # Add summary
+        validation['summary'] = {
+            'base_score_valid': validation['is_valid'],
+            'variation_reasonable': validation['variation_reasonable'],
+            'total_weight_used': total_weight,
+            'components_analyzed': len(component_scores)
+        }
         
         return validation
 
