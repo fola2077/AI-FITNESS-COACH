@@ -667,11 +667,11 @@ class MainWindow(QMainWindow):
         metrics_layout.setSpacing(4)
         
         self.tempo_widget = CompactMetricWidget("Tempo", "⏱️", "#00BCD4")
-        self.rom_widget = CompactMetricWidget("ROM", "📐", "#8BC34A")
+        self.depth_widget = CompactMetricWidget("Depth", "⬇️", "#8BC34A")  # Changed from ROM
         self.phase_widget = CompactMetricWidget("Phase", "🎯", "#E91E63")
         
         metrics_layout.addWidget(self.tempo_widget)
-        metrics_layout.addWidget(self.rom_widget)
+        metrics_layout.addWidget(self.depth_widget)
         metrics_layout.addWidget(self.phase_widget)
         
         metrics_card.content_layout.addLayout(metrics_layout)
@@ -870,7 +870,26 @@ class MainWindow(QMainWindow):
         
         # Update phase
         phase = live_metrics.get('phase', 'Ready')
-        self.phase_widget.setValue(phase)
+        phase_map = {
+            'bottom': 'Bottom',
+            'descent': 'Down', 
+            'ascent': 'Up',
+            'standing': 'Ready',
+            'ready': 'Ready',
+        }
+        friendly_phase = phase_map.get(phase.lower(), phase.capitalize() if phase else 'Ready')
+        self.phase_widget.setValue(friendly_phase)
+        
+        # UPDATE: Real-time depth calculation per phase
+        current_depth_rating = self._calculate_live_depth_rating(live_metrics)
+        self.depth_widget.setValue(current_depth_rating)
+        
+        # Update tempo based on current movement
+        tempo_info = live_metrics.get('tempo', '--')
+        if isinstance(tempo_info, (int, float)) and tempo_info > 0:
+            self.tempo_widget.setValue(f"{tempo_info:.1f}s")
+        else:
+            self.tempo_widget.setValue("--")
         
         # Display frame
         processed_frame = live_metrics.get('processed_frame')
@@ -986,9 +1005,20 @@ class MainWindow(QMainWindow):
             else:
                 self.tempo_widget.setValue("--")
 
-            # ROM with context
-            rom_value = self._get_rom_from_pose_processor()
-            self.rom_widget.setValue(rom_value)
+            # Convert depth score to user-friendly depth rating
+            depth_score = self._safe_extract_number(depth_data.get('score', 0)) if isinstance(depth_data, dict) else self._safe_extract_number(depth_data)
+            depth_rating = "N/A"
+            if depth_score is not None and depth_score > 0:
+                if depth_score >= 0.8:
+                    depth_rating = "Full"
+                elif depth_score >= 0.6:
+                    depth_rating = "Good"
+                elif depth_score >= 0.4:
+                    depth_rating = "Partial"
+                else:
+                    depth_rating = "Shallow"
+            
+            self.depth_widget.setValue(depth_rating)
 
             # Phase - user-friendly
             phase_map = {
@@ -1134,9 +1164,9 @@ class MainWindow(QMainWindow):
             # Reset performance metrics
             self.rep_label.setText("0")
             
-            # Reset live metrics
+            # Reset live metrics - Updated for per-phase depth
             self.tempo_widget.setValue("--")
-            self.rom_widget.setValue("--")
+            self.depth_widget.setValue("Ready")  # Changed from "--" to "Ready"
             self.phase_widget.setValue("Ready")
 
             # Reset session data
@@ -1202,76 +1232,58 @@ class MainWindow(QMainWindow):
             print(f"Error calculating ROM: {e}")
             return "--"
     
-    def _get_rom_from_pose_processor(self):
-        """Get ROM directly from pose processor landmarks"""
+    def _calculate_live_depth_rating(self, live_metrics):
+        """Calculate depth rating based on current pose data - REAL-TIME"""
         try:
-            if (hasattr(self, 'pose_processor') and 
-                self.pose_processor and 
-                hasattr(self.pose_processor, 'pose_detector') and
-                self.pose_processor.pose_detector.results and
-                self.pose_processor.pose_detector.results.pose_landmarks):
+            # Get current phase for context
+            phase = live_metrics.get('phase', 'ready').lower()
+            
+            # If not in a movement phase, show ready state
+            if phase in ['ready', 'standing']:
+                return "Ready"
+            
+            # Get current pose landmarks for real-time angle calculation
+            pose_data = live_metrics.get('pose_data', {})
+            landmarks = live_metrics.get('landmarks')
+            
+            # Try to get knee angles from live pose data
+            angles = live_metrics.get('angles', {})
+            left_knee = angles.get('knee_angle_left', 180)
+            right_knee = angles.get('knee_angle_right', 180)
+            
+            # Use the minimum (deepest) knee angle for depth assessment
+            min_knee_angle = min(left_knee, right_knee)
+            
+            # Convert knee angle to depth rating (lower angles = deeper squats)
+            if min_knee_angle <= 90:
+                depth_rating = "Full"      # Excellent depth - competition level
+            elif min_knee_angle <= 100:
+                depth_rating = "Deep"      # Very good depth - below parallel
+            elif min_knee_angle <= 110:
+                depth_rating = "Good"      # Good depth - at parallel
+            elif min_knee_angle <= 125:
+                depth_rating = "Partial"   # Moderate depth - quarter squat
+            else:
+                depth_rating = "Shallow"   # Needs improvement - barely squatting
+            
+            # Debug: Print depth info occasionally (every 30 frames)
+            import random
+            if random.randint(1, 30) == 1:
+                print(f"🔍 Live Depth: {depth_rating} (knee: {min_knee_angle:.1f}°, phase: {phase})")
+            
+            return depth_rating
                 
-                landmarks = self.pose_processor.pose_detector.results.pose_landmarks.landmark
-                knee_angle = self._calculate_knee_angle(landmarks)
-                
-                if knee_angle is not None:
-                    # Convert knee angle to ROM (lower angle = deeper squat = more ROM)
-                    # Full extension ~170-180°, deep squat ~90°, so ROM = 180 - min_angle
-                    if hasattr(self, '_min_knee_angle'):
-                        rom = 180 - self._min_knee_angle
-                        return f"{rom:.0f}°"
-                    else:
-                        # Use current angle as indicator
-                        current_rom = 180 - knee_angle
-                        return f"{current_rom:.0f}°"
-                        
-            return "--"
         except Exception as e:
-            print(f"Error getting ROM from pose processor: {e}")
-            return "--"
-    
-    def _calculate_knee_angle(self, landmarks):
-        """Calculate knee angle from MediaPipe landmarks"""
-        try:
-            import math
-            
-            # MediaPipe landmark indices for right leg
-            RIGHT_HIP = 24
-            RIGHT_KNEE = 26  
-            RIGHT_ANKLE = 28
-            
-            # Get landmark positions
-            hip = landmarks[RIGHT_HIP]
-            knee = landmarks[RIGHT_KNEE]
-            ankle = landmarks[RIGHT_ANKLE]
-            
-            # Calculate vectors
-            upper_leg = [hip.x - knee.x, hip.y - knee.y]
-            lower_leg = [ankle.x - knee.x, ankle.y - knee.y]
-            
-            # Calculate angle
-            dot_product = upper_leg[0] * lower_leg[0] + upper_leg[1] * lower_leg[1]
-            magnitude_upper = math.sqrt(upper_leg[0]**2 + upper_leg[1]**2)
-            magnitude_lower = math.sqrt(lower_leg[0]**2 + lower_leg[1]**2)
-            
-            if magnitude_upper == 0 or magnitude_lower == 0:
-                return None
-                
-            cos_angle = dot_product / (magnitude_upper * magnitude_lower)
-            cos_angle = max(-1, min(1, cos_angle))  # Clamp to valid range
-            
-            angle_rad = math.acos(cos_angle)
-            angle_deg = math.degrees(angle_rad)
-            
-            # Track minimum angle for ROM calculation
-            if not hasattr(self, '_min_knee_angle') or angle_deg < self._min_knee_angle:
-                self._min_knee_angle = angle_deg
-            
-            return angle_deg
-            
-        except Exception as e:
-            print(f"Error calculating knee angle: {e}")
-            return None
+            # Fallback to phase-based estimation if angle calculation fails
+            phase = live_metrics.get('phase', 'ready').lower()
+            if phase == 'bottom':
+                return "Good"      # Assume good depth at bottom
+            elif phase == 'descent':
+                return "Going"     # In progress
+            elif phase == 'ascent':
+                return "Done"      # Coming back up
+            else:
+                return "Ready"     # Default state
 
     # === REMAINING METHODS (keeping existing implementations) ===
     def on_difficulty_changed(self, text: str):
