@@ -424,8 +424,8 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
-        main_layout.setSpacing(15)
-        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(10)  # Reduced spacing
+        main_layout.setContentsMargins(10, 10, 10, 10)  # Reduced margins
         
         # Create splitter
         splitter = QSplitter(Qt.Horizontal)
@@ -439,7 +439,11 @@ class MainWindow(QMainWindow):
         
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
-        splitter.setSizes([1000, 500])  # Give video more space
+        splitter.setSizes([1200, 400])  # Give even more space to video (was 1000, 500)
+        
+        # Allow splitter to be resizable
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(3)
         
         # Status bar
         self.status_bar = self.statusBar()
@@ -453,25 +457,37 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("🏋️ AI Fitness Coach Ready - Select a source to start training")
     
     def _create_video_panel(self):
-        """Create the video panel (keeping existing logic)"""
+        """Create the video panel with improved full-window display"""
         panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(5, 5, 5, 5)  # Small margins instead of none
+        layout.setSpacing(8)  # Increased spacing for better separation
         
-        # Video card
+        # Video card - expanded for full window usage
         video_card = ModernCardWidget("🎥 Live Video Feed")
+        video_card.content_layout.setContentsMargins(5, 5, 5, 5)  # Minimal margins
+        
         self.video_label = QLabel("Press 'Start Webcam' or 'Load Video'")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(800, 600)
-        self.video_label.setScaledContents(False)
-        self.video_label.setStyleSheet("""
-            border: 2px dashed #555; 
-            background-color: #222;
-            border-radius: 10px;
-        """)
-        video_card.content_layout.addWidget(self.video_label)
-        layout.addWidget(video_card)
         
-        # Controls card
+        # Remove fixed minimum size and let it expand
+        self.video_label.setMinimumSize(400, 300)  # Reduced from 800x600
+        self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.video_label.setScaledContents(False)  # Keep this False for proper aspect ratio
+        
+        self.video_label.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #555; 
+                background-color: #222;
+                border-radius: 10px;
+                margin: 2px;
+            }
+        """)
+        
+        video_card.content_layout.addWidget(self.video_label)
+        layout.addWidget(video_card, 3)  # Give video card high stretch but not maximum
+        
+        # Controls card - compact
         controls_card = ModernCardWidget("🎮 Controls")
         controls_layout = QHBoxLayout()
         
@@ -502,7 +518,9 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.difficulty_combo)
         
         controls_card.content_layout.addLayout(controls_layout)
-        layout.addWidget(controls_card)
+        controls_card.setMinimumHeight(100)  # Ensure controls are visible
+        controls_card.setMaximumHeight(120)  # Increased from 80 to give more space
+        layout.addWidget(controls_card, 0)  # No stretch for controls
         
         return panel
     
@@ -879,7 +897,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(status_msg)
     
     def display_frame_improved(self, frame):
-        """Enhanced frame display (keeping existing logic)"""
+        """Enhanced frame display with better window filling"""
         try:
             h, w, ch = frame.shape
             
@@ -892,9 +910,18 @@ class MainWindow(QMainWindow):
                 q_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_BGR888)
             
             pixmap = QPixmap.fromImage(q_image)
+            
+            # Get the actual available space in the video label
             label_size = self.video_label.size()
-            scaled_pixmap = pixmap.scaled(label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.video_label.setPixmap(scaled_pixmap)
+            
+            # Scale to fit the available space while maintaining aspect ratio
+            if label_size.width() > 0 and label_size.height() > 0:
+                scaled_pixmap = pixmap.scaled(
+                    label_size, 
+                    Qt.KeepAspectRatio, 
+                    Qt.SmoothTransformation
+                )
+                self.video_label.setPixmap(scaled_pixmap)
             
         except Exception as e:
             print(f"Error displaying frame: {e}")
