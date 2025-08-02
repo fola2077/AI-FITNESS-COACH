@@ -2,6 +2,9 @@ import sys
 import cv2
 import time
 from pathlib import Path
+import time
+import cv2
+import random
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout,
                              QHBoxLayout, QWidget, QLabel, QFileDialog,
                              QTextEdit, QSplitter, QGridLayout,
@@ -358,6 +361,7 @@ class MainWindow(QMainWindow):
         # Session tracking
         self.session_start_time = None
         self.session_duration = 0
+        self.session_feedback_messages = []  # Store all feedback messages
         self._last_rep_count = 0  # Track rep count for visual effects
         self._last_report_ts = 0  # Track report timestamps
         
@@ -762,6 +766,7 @@ class MainWindow(QMainWindow):
             
             # Start session timing
             self.session_start_time = time.time()
+            self.session_feedback_messages = []  # Clear previous messages
             self.session_timer.start(1000)  # Update every second
             
             self.webcam_button.setEnabled(False)
@@ -775,6 +780,10 @@ class MainWindow(QMainWindow):
         """Stop session (keeping existing logic)"""
         if not self.stop_button.isEnabled():
             return
+        
+        # Calculate session duration
+        if self.session_start_time:
+            self.session_duration = time.time() - self.session_start_time
         
         self.timer.stop()
         
@@ -795,10 +804,9 @@ class MainWindow(QMainWindow):
         # Show report after delay
         from PySide6.QtCore import QTimer
         def show_delayed_report():
-            report = self.session_manager.get_session_summary()
-            total_reps = report.get('total_reps', 0)
+            total_reps = int(self.rep_label.text()) if self.rep_label.text().isdigit() else 0
             if total_reps > 0:
-                self.show_session_report()
+                self.show_enhanced_session_report()
         
         QTimer.singleShot(500, show_delayed_report)
     
@@ -997,6 +1005,27 @@ class MainWindow(QMainWindow):
             self._prev_scores['depth'] = depth_score
             self._prev_scores['stability'] = stability_score
             
+            # Store feedback message for session summary
+            # Calculate tempo from phase durations
+            phase_durations = analysis.get('phase_durations', {})
+            rep_tempo = 0
+            if isinstance(phase_durations, dict):
+                rep_tempo = sum(v for v in phase_durations.values() if isinstance(v, (int, float)))
+            
+            feedback_entry = {
+                'timestamp': time.time(),
+                'rep_number': self.rep_label.text(),
+                'overall_score': overall_score,
+                'safety_score': safety_score,
+                'depth_score': depth_score,
+                'stability_score': stability_score,
+                'tempo': rep_tempo,  # Add tempo per rep
+                'faults': analysis.get('faults', []),
+                'feedback': analysis.get('feedback', []),
+                'recommendations': analysis.get('recommendations', [])
+            }
+            self.session_feedback_messages.append(feedback_entry)
+            
             # Update live metrics
             phase_durations = analysis.get('phase_durations', {})
             if isinstance(phase_durations, dict):
@@ -1172,6 +1201,11 @@ class MainWindow(QMainWindow):
             # Reset session data
             if hasattr(self.session_manager, 'reset_session'):
                 self.session_manager.reset_session()
+            
+            # Reset session feedback messages
+            self.session_feedback_messages = []
+            self.session_start_time = None
+            self.session_duration = 0
                 
             # Reset pose processor if available
             if hasattr(self, 'pose_processor') and hasattr(self.pose_processor, 'reset'):
@@ -1291,6 +1325,282 @@ class MainWindow(QMainWindow):
         self.pose_processor.form_grader.set_difficulty(difficulty)
         print(f"Difficulty changed to: {difficulty}")
     
+    def show_enhanced_session_report(self):
+        """Show comprehensive session report with duration and feedback"""
+        try:
+            # Calculate session statistics
+            total_reps = int(self.rep_label.text()) if self.rep_label.text().isdigit() else 0
+            duration_mins = int(self.session_duration // 60) if self.session_duration else 0
+            duration_secs = int(self.session_duration % 60) if self.session_duration else 0
+            
+            # Calculate average scores from feedback messages
+            if self.session_feedback_messages:
+                avg_overall = sum(msg['overall_score'] for msg in self.session_feedback_messages) / len(self.session_feedback_messages)
+                avg_safety = sum(msg['safety_score'] for msg in self.session_feedback_messages) / len(self.session_feedback_messages)
+                avg_depth = sum(msg['depth_score'] for msg in self.session_feedback_messages) / len(self.session_feedback_messages)
+                avg_stability = sum(msg['stability_score'] for msg in self.session_feedback_messages) / len(self.session_feedback_messages)
+                avg_tempo = sum(msg['tempo'] for msg in self.session_feedback_messages if msg['tempo'] > 0) / len([msg for msg in self.session_feedback_messages if msg['tempo'] > 0]) if any(msg['tempo'] > 0 for msg in self.session_feedback_messages) else 0
+            else:
+                avg_overall = avg_safety = avg_depth = avg_stability = avg_tempo = 0
+            
+            # Collect all unique issues and tips
+            all_faults = []
+            all_feedback = []
+            all_recommendations = []
+            for msg in self.session_feedback_messages:
+                all_faults.extend(msg['faults'])
+                all_feedback.extend(msg['feedback'])
+                all_recommendations.extend(msg['recommendations'])
+            
+            unique_faults = list(set(all_faults))[:5]  # Top 5 unique issues
+            unique_feedback = list(set(all_feedback))[:5]  # Top 5 unique tips
+            unique_recommendations = list(set(all_recommendations))[:3]  # Top 3 recommendations
+            
+            # Create enhanced HTML report
+            report_html = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ 
+                        font-family: Arial, sans-serif; 
+                        background: linear-gradient(135deg, #1e1e1e, #2d2d2d);
+                        color: #e0e0e0; 
+                        margin: 20px; 
+                        line-height: 1.6;
+                    }}
+                    .header {{ 
+                        text-align: center; 
+                        background: linear-gradient(135deg, #4CAF50, #45a049);
+                        color: white; 
+                        padding: 20px; 
+                        border-radius: 15px; 
+                        margin-bottom: 20px;
+                        box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+                    }}
+                    .section {{ 
+                        background: rgba(42, 42, 42, 0.8); 
+                        padding: 15px; 
+                        margin: 15px 0; 
+                        border-radius: 10px;
+                        border-left: 4px solid #4CAF50;
+                    }}
+                    .stats-grid {{ 
+                        display: grid; 
+                        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
+                        gap: 15px; 
+                        margin: 15px 0; 
+                    }}
+                    .stat-card {{ 
+                        background: linear-gradient(135deg, #333, #444);
+                        padding: 15px; 
+                        border-radius: 8px; 
+                        text-align: center;
+                        border: 2px solid #555;
+                    }}
+                    .stat-value {{ 
+                        font-size: 24px; 
+                        font-weight: bold; 
+                        color: #4CAF50; 
+                    }}
+                    .feedback-item {{ 
+                        background: rgba(60, 60, 60, 0.6); 
+                        padding: 8px; 
+                        margin: 5px 0; 
+                        border-radius: 5px;
+                        border-left: 3px solid #2196F3;
+                    }}
+                    .fault-item {{ 
+                        background: rgba(244, 67, 54, 0.1); 
+                        border-left: 3px solid #F44336;
+                    }}
+                    .tip-item {{ 
+                        background: rgba(76, 175, 80, 0.1); 
+                        border-left: 3px solid #4CAF50;
+                    }}
+                    .duration {{ 
+                        font-size: 18px; 
+                        color: #FFD700; 
+                        font-weight: bold; 
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>🏋️ Workout Session Complete!</h1>
+                    <div class="duration">Session Duration: {duration_mins:02d}:{duration_secs:02d}</div>
+                </div>
+                
+                <div class="section">
+                    <h2>📊 Session Statistics</h2>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value">{total_reps}</div>
+                            <div>Total Reps</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{avg_overall:.1f}%</div>
+                            <div>Avg Overall</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{avg_safety:.1f}%</div>
+                            <div>Avg Safety</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{avg_depth:.1f}%</div>
+                            <div>Avg Depth</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{avg_stability:.1f}%</div>
+                            <div>Avg Stability</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{avg_tempo:.1f}s</div>
+                            <div>Avg Tempo</div>
+                        </div>
+                    </div>
+                </div>
+            """
+            
+            # Add feedback messages section
+            if self.session_feedback_messages:
+                report_html += """
+                <div class="section">
+                    <h2>💬 Rep-by-Rep Performance</h2>
+                """
+                
+                for msg in self.session_feedback_messages[-5:]:  # Last 5 reps
+                    tempo_display = f"{msg['tempo']:.1f}s" if msg['tempo'] > 0 else "N/A"
+                    report_html += f"""
+                    <div class="feedback-item">
+                        <strong>Rep {msg['rep_number']} - Overall: {msg['overall_score']:.1f}% | Tempo: {tempo_display}</strong>
+                        <br>Safety: {msg['safety_score']:.1f}% | Depth: {msg['depth_score']:.1f}% | Stability: {msg['stability_score']:.1f}%
+                    </div>
+                    """
+                
+                report_html += "</div>"
+            
+            # Add key issues section
+            if unique_faults:
+                report_html += """
+                <div class="section">
+                    <h2>⚠️ Key Areas for Improvement</h2>
+                """
+                for fault in unique_faults:
+                    report_html += f'<div class="feedback-item fault-item">• {fault}</div>'
+                report_html += "</div>"
+            
+            # Add tips section
+            if unique_feedback:
+                report_html += """
+                <div class="section">
+                    <h2>💡 Key Tips from This Session</h2>
+                """
+                for tip in unique_feedback:
+                    report_html += f'<div class="feedback-item tip-item">• {tip}</div>'
+                report_html += "</div>"
+            
+            # Add recommendations section
+            if unique_recommendations:
+                report_html += """
+                <div class="section">
+                    <h2>🎯 Recommendations</h2>
+                """
+                for rec in unique_recommendations:
+                    report_html += f'<div class="feedback-item">• {rec}</div>'
+                report_html += "</div>"
+            
+            report_html += """
+                <div class="section">
+                    <h2>🚀 Next Session Goals</h2>
+                    <div class="feedback-item">
+            """
+            
+            # Generate personalized goals
+            if avg_overall < 70:
+                report_html += "• Focus on fundamental form improvements<br>"
+            if avg_safety < 75:
+                report_html += "• Pay attention to back posture and joint alignment<br>"
+            if avg_depth < 80:
+                report_html += "• Work on achieving better squat depth<br>"
+            if avg_stability < 75:
+                report_html += "• Practice balance and core stability<br>"
+            if avg_tempo > 4.0:
+                report_html += "• Try to increase tempo for more dynamic movement<br>"
+            elif avg_tempo < 2.0 and avg_tempo > 0:
+                report_html += "• Slow down for better control and form<br>"
+            
+            report_html += """
+                        • Aim to complete more reps with consistent form<br>
+                        • Review feedback tips and implement gradually
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+            
+            # Show in dialog
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout
+            
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Session Report")
+            dialog.setGeometry(200, 200, 800, 600)
+            dialog.setStyleSheet("""
+                QDialog {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #1e1e1e, stop:1 #2d2d2d);
+                }
+            """)
+            
+            layout = QVBoxLayout()
+            
+            # Report display
+            report_display = QTextEdit()
+            report_display.setHtml(report_html)
+            report_display.setReadOnly(True)
+            report_display.setStyleSheet("""
+                QTextEdit {
+                    background-color: #1e1e1e;
+                    border: none;
+                    border-radius: 10px;
+                }
+            """)
+            
+            # Buttons
+            button_layout = QHBoxLayout()
+            close_button = QPushButton("Close")
+            close_button.clicked.connect(dialog.accept)
+            close_button.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #4CAF50, stop:1 #388E3C);
+                    color: white;
+                    border: none;
+                    padding: 10px 20px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #66BB6A, stop:1 #4CAF50);
+                }
+            """)
+            
+            button_layout.addStretch()
+            button_layout.addWidget(close_button)
+            
+            layout.addWidget(report_display)
+            layout.addLayout(button_layout)
+            dialog.setLayout(layout)
+            
+            dialog.exec()
+            
+        except Exception as e:
+            print(f"Error showing enhanced session report: {e}")
+            # Fallback to basic message
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Session Complete", 
+                f"Session completed with {int(self.rep_label.text()) if self.rep_label.text().isdigit() else 0} reps!")
+
     def show_session_report(self):
         report_data = self.session_manager.get_session_summary()
         if not report_data or report_data.get('total_reps', 0) == 0:

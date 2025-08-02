@@ -87,17 +87,6 @@ class PoseDetector:
                         # Draw a larger circle around important landmarks
                         cv2.circle(frame, (x, y), 10, (255, 0, 255), -1)  # Filled magenta circle
                 
-                # Draw a message indicating pose detected
-                cv2.putText(
-                    frame,
-                    "POSE DETECTED ✓",
-                    (10, height - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    (0, 255, 0),  # Green
-                    2
-                )
-                
                 if self.debug_mode:
                     print("✅ Landmarks drawn successfully!")
                 
