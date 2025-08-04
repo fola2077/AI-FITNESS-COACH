@@ -111,38 +111,73 @@ def print_startup_info():
     print("\n🚀 Starting application...")
     print("-" * 50)
 
-def validate_form_grader():
-    """Validate form grader configuration on startup."""
+def validate_enhanced_form_grader():
+    """Validate enhanced form grader with all new analyzers"""
     try:
         from src.grading.advanced_form_grader import (
             IntelligentFormGrader, 
             ThresholdConfig,
-            BiomechanicalMetrics
+            BiomechanicalMetrics,
+            FaultType
         )
+        
+        print("🧪 Testing Enhanced Form Grader...")
         
         # Test form grader initialization
         config = ThresholdConfig.emergency_calibrated()
         grader = IntelligentFormGrader(difficulty="casual", config=config)
         
-        print("✅ Advanced Form Grader initialized successfully")
+        print("✅ Enhanced Form Grader initialized with new analyzers:")
+        for analyzer_name in grader.analyzers.keys():
+            print(f"   • {analyzer_name.title()}Analyzer")
         
-        # Test with dummy data
+        # Test with synthetic data that should trigger various faults
         test_metrics = [
+            # Frame 1: Bad shallow depth
             BiomechanicalMetrics(
-                knee_angle_left=90,
-                knee_angle_right=92,
-                back_angle=110,
+                knee_angle_left=140,  # Very shallow
+                knee_angle_right=138,
+                back_angle=70,        # Bad back rounding
+                landmark_visibility=0.9
+            ),
+            # Frame 2: Better depth but still issues
+            BiomechanicalMetrics(
+                knee_angle_left=110,
+                knee_angle_right=108,
+                back_angle=85,
+                landmark_visibility=0.9
+            ),
+            # Frame 3: Good depth
+            BiomechanicalMetrics(
+                knee_angle_left=85,   # Good depth
+                knee_angle_right=87,
+                back_angle=95,        # Good back angle
                 landmark_visibility=0.9
             )
         ]
         
         result = grader.grade_repetition(test_metrics)
-        print(f"✅ Form grader test passed - Score: {result['score']}%")
+        
+        print(f"✅ Enhanced form grader test passed:")
+        print(f"   Overall Score: {result['score']:.1f}%")
+        print(f"   Components Analyzed: {len(result.get('component_scores', {}))}")
+        print(f"   Faults Detected: {len(result.get('faults', []))}")
+        print(f"   Key Issues: {len(result.get('key_issues', []))}")
+        
+        # Test fault detection
+        detected_faults = result.get('faults', [])
+        if any('shallow' in fault.lower() for fault in detected_faults):
+            print("✅ Shallow depth detection working")
+        
+        if any('back' in fault.lower() for fault in detected_faults):
+            print("✅ Back rounding detection working")
         
         return True
         
     except Exception as e:
-        print(f"❌ Form grader validation failed: {e}")
+        print(f"❌ Enhanced form grader validation failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def run_application():
@@ -164,9 +199,9 @@ def run_application():
             input("Press Enter to exit...")
             return 1
         
-        # NEW: Validate form grader
-        if not validate_form_grader():
-            print("⚠️ Form grader validation failed, but continuing anyway...")
+        # NEW: Validate enhanced form grader
+        if not validate_enhanced_form_grader():
+            print("⚠️ Enhanced form grader validation failed, but continuing anyway...")
         
         # Import Qt after dependency check
         from PySide6.QtWidgets import QApplication

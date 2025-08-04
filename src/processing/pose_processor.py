@@ -153,7 +153,8 @@ class PoseProcessor:
                 acceleration=acceleration,
                 jerk=jerk,
                 timestamp=time.time(),
-                landmark_visibility=visibility
+                landmark_visibility=visibility,
+                raw_landmarks=landmarks  # Pass raw landmarks for enhanced analysis
             )
         except Exception as e:
             print(f"Error creating biomechanical metrics: {e}")

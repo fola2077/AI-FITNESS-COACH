@@ -47,9 +47,46 @@ class ThresholdConfig:
     stability_poor_stability: float = 0.050        # Emergency calibrated from 0.015
     stability_excellent_stability: float = 0.010   # Emergency calibrated from 0.005
     
-    # Depth Analyzer Thresholds (would be added when implementing depth analysis)
-    depth_insufficient_range: float = 0.6          # Placeholder for future depth analysis
+    # Depth Analyzer Thresholds (degrees)
+    depth_bad_shallow_threshold: float = 130.0     # Very shallow squat (knee angle > 130°)
+    depth_insufficient_threshold: float = 115.0    # Shallow squat (knee angle > 115°)
+    depth_partial_rep_threshold: float = 100.0     # Incomplete range of motion
+    depth_movement_range_threshold: float = 50.0   # Minimum movement range (degrees)
     depth_excellent_range: float = 0.9             # Placeholder for future depth analysis
+    
+    # Butt Wink (Back Rounding) Analyzer Thresholds
+    butt_wink_std_threshold: float = 8.0           # Standard deviation threshold for back angle variation
+    butt_wink_range_threshold: float = 15.0        # Range threshold for back angle variation
+    butt_wink_bottom_variation_threshold: float = 8.0  # Variation at bottom position
+    
+    # Knee Valgus Analyzer Thresholds
+    knee_valgus_ratio_threshold: float = 0.85      # Knee-to-ankle distance ratio (< 0.85 = valgus)
+    knee_valgus_penalty_multiplier: float = 1.5    # Severity multiplier for penalties
+    knee_valgus_max_penalty: float = 30.0          # Maximum penalty for knee valgus
+    
+    # Head Position Analyzer Thresholds (degrees)
+    head_position_angle_threshold: float = 25.0    # Max head angle from vertical (degrees)
+    head_position_fault_ratio: float = 0.3         # Fault threshold (30% of frames)
+    head_position_max_penalty: float = 20.0        # Maximum penalty for head position
+    
+    # Foot Stability Analyzer Thresholds
+    foot_heel_lift_threshold: float = 0.02         # Heel lift detection threshold
+    foot_stability_fault_ratio: float = 0.2        # Fault threshold (20% of frames)
+    foot_stability_max_penalty: float = 15.0       # Maximum penalty for foot instability
+    
+    # Symmetry Analyzer Thresholds
+    symmetry_threshold: float = 0.85               # Minimum symmetry ratio
+    symmetry_penalty_multiplier: float = 100.0     # Penalty calculation multiplier
+    
+    # Tempo Analyzer Thresholds (seconds)
+    tempo_too_fast_threshold: float = 1.2          # Minimum rep duration
+    tempo_too_slow_threshold: float = 6.0          # Maximum rep duration
+    tempo_optimal_min: float = 2.0                 # Optimal rep duration minimum
+    tempo_optimal_max: float = 4.5                 # Optimal rep duration maximum
+    
+    # Frame Rate Configuration
+    frame_rate: float = 30.0                       # Current frame rate setting
+    mediapipe_landmark_count: int = 33             # Expected MediaPipe landmark count
     
     @classmethod
     def emergency_calibrated(cls) -> 'ThresholdConfig':
@@ -85,6 +122,36 @@ class FaultSeverity(Enum):
     MODERATE = "moderate"    # 6-15 point penalty
     MAJOR = "major"         # 16-25 point penalty
     CRITICAL = "critical"   # 26+ point penalty, safety concern
+
+class FaultType(Enum):
+    """Enhanced fault types for comprehensive form analysis"""
+    # Safety faults
+    SEVERE_BACK_ROUNDING = "severe_back_rounding"
+    MODERATE_BACK_ROUNDING = "moderate_back_rounding"
+    BAD_BACK_ROUND = "bad_back_round"
+    BAD_BACK_WARP = "bad_back_warp"  # Butt wink
+    
+    # Depth faults
+    PARTIAL_REP = "partial_rep"
+    INSUFFICIENT_DEPTH = "insufficient_depth"
+    BAD_SHALLOW_DEPTH = "bad_shallow_depth"  # Very shallow
+    
+    # Stability faults
+    SEVERE_INSTABILITY = "severe_instability"
+    MODERATE_INSTABILITY = "moderate_instability"
+    
+    # Knee tracking faults
+    BAD_INNER_THIGH = "bad_inner_thigh"  # Knee valgus
+    KNEE_VALGUS = "knee_valgus"
+    
+    # Head position faults
+    BAD_HEAD = "bad_head"  # Looking down too much
+    HEAD_FORWARD = "head_forward"
+    
+    # Foot position faults
+    BAD_TOE = "bad_toe"  # Heel lift
+    HEEL_LIFT = "heel_lift"
+    FOOT_INSTABILITY = "foot_instability"
 
 class MovementPhase(Enum):
     """Detailed movement phase classification"""
@@ -128,6 +195,89 @@ class BiomechanicalMetrics:
     
     # Visibility/confidence
     landmark_visibility: float = 1.0
+    
+    # Enhanced tracking data for new analyzers
+    raw_landmarks: List = field(default_factory=list)
+    
+    # Additional landmark positions (extracted from raw_landmarks)
+    left_knee_pos: Optional[Any] = None
+    right_knee_pos: Optional[Any] = None
+    left_ankle_pos: Optional[Any] = None
+    right_ankle_pos: Optional[Any] = None
+    left_heel_pos: Optional[Any] = None
+    right_heel_pos: Optional[Any] = None
+    left_toe_pos: Optional[Any] = None
+    right_toe_pos: Optional[Any] = None
+    nose_pos: Optional[Any] = None
+    left_ear_pos: Optional[Any] = None
+    right_ear_pos: Optional[Any] = None
+    left_shoulder_pos: Optional[Any] = None
+    right_shoulder_pos: Optional[Any] = None
+    left_hip_pos: Optional[Any] = None
+    right_hip_pos: Optional[Any] = None
+    
+    def __post_init__(self):
+        """Extract enhanced metrics from raw landmark data if available"""
+        # Use configurable landmark count instead of hardcoded 33
+        landmark_count = getattr(self, '_config_landmark_count', 33)  # Default to 33 for backward compatibility
+        if self.raw_landmarks and len(self.raw_landmarks) >= landmark_count:
+            self._extract_enhanced_metrics()
+    
+    def _extract_enhanced_metrics(self):
+        """Extract enhanced metrics from raw landmark data"""
+        try:
+            landmarks = self.raw_landmarks
+            
+            # Knee positions (landmarks 25, 26)
+            self.left_knee_pos = landmarks[25] if len(landmarks) > 25 else None
+            self.right_knee_pos = landmarks[26] if len(landmarks) > 26 else None
+            
+            # Ankle positions (landmarks 27, 28)
+            self.left_ankle_pos = landmarks[27] if len(landmarks) > 27 else None
+            self.right_ankle_pos = landmarks[28] if len(landmarks) > 28 else None
+            
+            # Heel positions (landmarks 29, 30)
+            self.left_heel_pos = landmarks[29] if len(landmarks) > 29 else None
+            self.right_heel_pos = landmarks[30] if len(landmarks) > 30 else None
+            
+            # Toe positions (landmarks 31, 32)
+            self.left_toe_pos = landmarks[31] if len(landmarks) > 31 else None
+            self.right_toe_pos = landmarks[32] if len(landmarks) > 32 else None
+            
+            # Head landmarks
+            self.nose_pos = landmarks[0] if len(landmarks) > 0 else None
+            self.left_ear_pos = landmarks[7] if len(landmarks) > 7 else None
+            self.right_ear_pos = landmarks[8] if len(landmarks) > 8 else None
+            
+            # Shoulder positions (landmarks 11, 12)
+            self.left_shoulder_pos = landmarks[11] if len(landmarks) > 11 else None
+            self.right_shoulder_pos = landmarks[12] if len(landmarks) > 12 else None
+            
+            # Hip positions (landmarks 23, 24)
+            self.left_hip_pos = landmarks[23] if len(landmarks) > 23 else None
+            self.right_hip_pos = landmarks[24] if len(landmarks) > 24 else None
+            
+        except (IndexError, AttributeError, TypeError) as e:
+            logger.warning(f"Could not extract enhanced metrics: {e}")
+            self._set_default_positions()
+    
+    def _set_default_positions(self):
+        """Set default values when landmarks are not available"""
+        self.left_knee_pos = None
+        self.right_knee_pos = None
+        self.left_ankle_pos = None
+        self.right_ankle_pos = None
+        self.left_heel_pos = None
+        self.right_heel_pos = None
+        self.left_toe_pos = None
+        self.right_toe_pos = None
+        self.nose_pos = None
+        self.left_ear_pos = None
+        self.right_ear_pos = None
+        self.left_shoulder_pos = None
+        self.right_shoulder_pos = None
+        self.left_hip_pos = None
+        self.right_hip_pos = None
 
 @dataclass
 class UserProfile:
@@ -425,11 +575,13 @@ class BaseAnalyzer:
 class SafetyAnalyzer(BaseAnalyzer):
     """Analyzes critical safety issues like back rounding with CONFIGURABLE thresholds"""
     
-    def __init__(self, config: ThresholdConfig = None):
+    def __init__(self, config: ThresholdConfig):
         super().__init__(required_landmarks=[11, 12, 23, 24])  # shoulders, hips
         
-        # Use provided config or create emergency-calibrated default
-        self.config = config or ThresholdConfig.emergency_calibrated()
+        if not isinstance(config, ThresholdConfig):
+            raise TypeError("SafetyAnalyzer requires a valid ThresholdConfig object")
+        
+        self.config = config
         
         # Apply configuration thresholds
         self.SEVERE_BACK_ROUNDING_THRESHOLD = self.config.safety_severe_back_rounding
@@ -468,7 +620,7 @@ class SafetyAnalyzer(BaseAnalyzer):
             # Base penalty 60, plus 3 points per degree below threshold
             penalty_amount = 60 + (self.SEVERE_BACK_ROUNDING_THRESHOLD - min_back_angle) * 3.0
             penalties.append({
-                'reason': 'Severe Back Rounding - DANGER!', 
+                'reason': 'DANGER: Severe back rounding detected!', 
                 'amount': min(75, penalty_amount),  # Increased cap to 75
                 'metric_value': min_back_angle
             })
@@ -476,13 +628,13 @@ class SafetyAnalyzer(BaseAnalyzer):
             faults.append('BACK_ROUNDING')
             penalty_amount = 15 + (self.MODERATE_BACK_ROUNDING_THRESHOLD - min_back_angle) * 1.2
             penalties.append({
-                'reason': 'Excessive forward lean', 
+                'reason': 'Back rounding - keep chest up and spine neutral', 
                 'amount': min(25, penalty_amount),
                 'metric_value': min_back_angle
             })
         elif min_back_angle >= self.EXCELLENT_POSTURE_THRESHOLD:  # >= 120° - excellent
             bonuses.append({
-                'reason': 'Excellent upright posture', 
+                'reason': 'Excellent upright posture maintained', 
                 'amount': 5,
                 'metric_value': min_back_angle
             })
@@ -573,8 +725,11 @@ class SafetyAnalyzer(BaseAnalyzer):
 class DepthAnalyzer(BaseAnalyzer):
     """Analyzes squat depth and detects partial reps"""
     
-    def __init__(self):
+    def __init__(self, config: ThresholdConfig):
         super().__init__(required_landmarks=[25, 26, 27, 28])  # knees, ankles
+        if not isinstance(config, ThresholdConfig):
+            raise TypeError("DepthAnalyzer requires a valid ThresholdConfig object")
+        self.config = config
     
     def _check_difficulty(self, difficulty: str) -> bool:
         # FIXED: Enable depth analysis for ALL difficulty levels - depth is critical for safety!
@@ -593,28 +748,44 @@ class DepthAnalyzer(BaseAnalyzer):
         penalties = []
         bonuses = []
         
-        # Check for partial reps first - even more sensitive detection
-        if movement_range < 50:  # Increased from 40° - broader detection
-            faults.append('PARTIAL_REP')
-            penalties.append({'reason': f'Partial Rep ({movement_range:.1f}° range)', 'amount': 50})
-            # Also check if it's very shallow (don't return early)
-            if min_knee_angle > 120:
-                faults.append('VERY_SHALLOW')
-            return {'faults': faults, 'penalties': penalties, 'bonuses': bonuses}
+        # REFINED: Only assign the most severe depth fault per rep
+        # Use elif to prevent multiple overlapping depth faults
+        if min_knee_angle > self.config.depth_bad_shallow_threshold:  # Very shallow (barely squatting)
+            faults.append(FaultType.BAD_SHALLOW_DEPTH.value)
+            penalty = 35 + (min_knee_angle - self.config.depth_bad_shallow_threshold) * 1.5
+            penalties.append({
+                'reason': 'Extremely shallow squat - barely bending knees',
+                'amount': min(50, penalty)
+            })
+        elif min_knee_angle > self.config.depth_insufficient_threshold:  # Shallow (above parallel)
+            faults.append(FaultType.INSUFFICIENT_DEPTH.value)
+            penalty = 20 + (min_knee_angle - self.config.depth_insufficient_threshold) * 1.0
+            penalties.append({
+                'reason': 'Insufficient depth - not reaching parallel',
+                'amount': min(30, penalty)
+            })
+        elif min_knee_angle > self.config.depth_partial_rep_threshold:  # Partial rep
+            faults.append(FaultType.PARTIAL_REP.value)
+            penalty = 10 + (min_knee_angle - self.config.depth_partial_rep_threshold) * 0.8
+            penalties.append({
+                'reason': 'Partial range of motion',
+                'amount': min(20, penalty)
+            })
+        else:
+            # Good depth - potential bonus
+            if min_knee_angle <= 85:  # Excellent depth
+                bonuses.append({
+                    'reason': 'Excellent squat depth achieved',
+                    'amount': 5
+                })
         
-        # Range-based depth scoring - stricter thresholds
-        if min_knee_angle > 120:  # Very shallow - stricter (was 110°)
-            faults.append('VERY_SHALLOW')
-            penalty = 30 + (min_knee_angle - 120) * 0.8  # Increased penalty
-            penalties.append({'reason': 'Very Shallow Depth', 'amount': min(40, penalty)})
-        elif min_knee_angle > 100:  # Shallow - stricter (was 95°)
-            faults.append('INSUFFICIENT_DEPTH')
-            penalty = 20 + (min_knee_angle - 100) * 1.0  # Increased penalty
-            penalties.append({'reason': 'Insufficient Depth', 'amount': min(30, penalty)})
-        elif min_knee_angle < 75:  # Excellent depth
-            bonuses.append({'reason': 'Excellent Depth', 'amount': 8})
-        elif min_knee_angle < 85:  # Good depth
-            bonuses.append({'reason': 'Good Depth', 'amount': 5})
+        # Only check for movement range if no other depth fault was found
+        if not faults and movement_range < self.config.depth_movement_range_threshold:
+            faults.append(FaultType.PARTIAL_REP.value)
+            penalties.append({
+                'reason': f'Partial rep - limited range ({movement_range:.1f}°)',
+                'amount': 25
+            })
         
         return {'faults': faults, 'penalties': penalties, 'bonuses': bonuses}
     
@@ -698,11 +869,13 @@ class DepthAnalyzer(BaseAnalyzer):
 class StabilityAnalyzer(BaseAnalyzer):
     """Analyzes postural stability and balance with CONFIGURABLE thresholds"""
     
-    def __init__(self, config: ThresholdConfig = None):
+    def __init__(self, config: ThresholdConfig):
         super().__init__(required_landmarks=[0, 15, 16])  # nose, ankles for COM
         
-        # Use provided config or create emergency-calibrated default
-        self.config = config or ThresholdConfig.emergency_calibrated()
+        if not isinstance(config, ThresholdConfig):
+            raise TypeError("StabilityAnalyzer requires a valid ThresholdConfig object")
+        
+        self.config = config
         
         # Apply configuration thresholds
         self.SEVERE_INSTABILITY_THRESHOLD = self.config.stability_severe_instability
@@ -743,7 +916,7 @@ class StabilityAnalyzer(BaseAnalyzer):
             faults.append('POOR_STABILITY')  # Include both when severe
             penalty_amount = 25 + min(20, (total_sway - self.SEVERE_INSTABILITY_THRESHOLD) * 1000)
             penalties.append({
-                'reason': 'Severe balance instability detected',
+                'reason': 'Severe balance issues - focus on core stability',
                 'amount': penalty_amount,
                 'metric_value': total_sway
             })
@@ -751,7 +924,7 @@ class StabilityAnalyzer(BaseAnalyzer):
             faults.append('POOR_STABILITY')
             penalty_amount = 8 + min(12, (total_sway - self.POOR_STABILITY_THRESHOLD) * 800)
             penalties.append({
-                'reason': 'Poor balance control detected',
+                'reason': 'Poor balance control - engage core muscles',
                 'amount': penalty_amount,
                 'metric_value': total_sway
             })
@@ -787,31 +960,43 @@ class StabilityAnalyzer(BaseAnalyzer):
 class TempoAnalyzer(BaseAnalyzer):
     """Analyzes movement tempo and timing"""
     
+    def __init__(self, config: ThresholdConfig):
+        super().__init__()
+        if not isinstance(config, ThresholdConfig):
+            raise TypeError("TempoAnalyzer requires a valid ThresholdConfig object")
+        self.config = config
+    
     def _check_difficulty(self, difficulty: str) -> bool:
         return difficulty in ['casual', 'professional']
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
-        duration = len(frame_metrics) / 30.0  # Assume 30 FPS
+        duration = len(frame_metrics) / self.config.frame_rate
         
         faults = []
         penalties = []
         bonuses = []
         
-        if duration < 1.2:  # Too fast
+        if duration < self.config.tempo_too_fast_threshold:  # Too fast
             faults.append('TOO_FAST')
-            penalty = (1.2 - duration) * 20
-            penalties.append({'reason': 'Too Fast - Control the Movement', 'amount': min(25, penalty)})
-        elif duration > 6.0:  # Too slow
+            penalty = (self.config.tempo_too_fast_threshold - duration) * 20
+            penalties.append({'reason': 'Too fast - slow down and control the movement', 'amount': min(25, penalty)})
+        elif duration > self.config.tempo_too_slow_threshold:  # Too slow
             faults.append('TOO_SLOW')
-            penalty = (duration - 6.0) * 3
-            penalties.append({'reason': 'Too Slow', 'amount': min(15, penalty)})
-        elif 2.0 <= duration <= 4.5:  # Good tempo
-            bonuses.append({'reason': 'Good Tempo', 'amount': 5})
+            penalty = (duration - self.config.tempo_too_slow_threshold) * 3
+            penalties.append({'reason': 'Too slow - maintain steady tempo', 'amount': min(15, penalty)})
+        elif self.config.tempo_optimal_min <= duration <= self.config.tempo_optimal_max:  # Good tempo
+            bonuses.append({'reason': 'Good tempo maintained', 'amount': 5})
         
         return {'faults': faults, 'penalties': penalties, 'bonuses': bonuses}
 
 class SymmetryAnalyzer(BaseAnalyzer):
     """Analyzes bilateral symmetry and movement patterns"""
+    
+    def __init__(self, config: ThresholdConfig):
+        super().__init__()
+        if not isinstance(config, ThresholdConfig):
+            raise TypeError("SymmetryAnalyzer requires a valid ThresholdConfig object")
+        self.config = config
     
     def _check_difficulty(self, difficulty: str) -> bool:
         return difficulty == 'professional'
@@ -830,12 +1015,273 @@ class SymmetryAnalyzer(BaseAnalyzer):
         faults = []
         penalties = []
         
-        if avg_symmetry < 0.85:  # Significant asymmetry
+        if avg_symmetry < self.config.symmetry_threshold:  # Significant asymmetry
             faults.append('ASYMMETRIC_MOVEMENT')
-            penalty = (0.85 - avg_symmetry) * 100
-            penalties.append({'reason': 'Asymmetric Movement', 'amount': min(20, penalty)})
+            penalty = (self.config.symmetry_threshold - avg_symmetry) * self.config.symmetry_penalty_multiplier
+            penalties.append({'reason': 'Uneven movement - check left/right balance', 'amount': min(20, penalty)})
         
         return {'faults': faults, 'penalties': penalties, 'bonuses': []}
+
+class ButtWinkAnalyzer(BaseAnalyzer):
+    """Analyzes for pelvic tilt (butt wink) at the bottom of the squat"""
+    
+    def __init__(self, config: ThresholdConfig):
+        super().__init__()
+        if not isinstance(config, ThresholdConfig):
+            raise TypeError("ButtWinkAnalyzer requires a valid ThresholdConfig object")
+        self.config = config
+    
+    def _check_difficulty(self, difficulty: str) -> bool:
+        return difficulty in ['casual', 'professional']
+    
+    def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
+        if len(frame_metrics) < 15:
+            return {'faults': [], 'penalties': [], 'bonuses': []}
+        
+        faults, penalties, bonuses = [], [], []
+        
+        try:
+            # Find the bottom of the squat (minimum knee angle)
+            knee_angles = [min(fm.knee_angle_left, fm.knee_angle_right) for fm in frame_metrics]
+            bottom_frame_index = np.argmin(knee_angles)
+            
+            # Analyze back angle around the bottom (±5 frames)
+            window_size = 5
+            start_idx = max(0, bottom_frame_index - window_size)
+            end_idx = min(len(frame_metrics), bottom_frame_index + window_size + 1)
+            
+            back_angles_window = [fm.back_angle for fm in frame_metrics[start_idx:end_idx]]
+            
+            if len(back_angles_window) > 3:
+                # Calculate back angle variation
+                back_angle_std = np.std(back_angles_window)
+                back_angle_range = max(back_angles_window) - min(back_angles_window)
+                
+                # Detect butt wink patterns using config thresholds
+                if (back_angle_std > self.config.butt_wink_std_threshold or 
+                    back_angle_range > self.config.butt_wink_range_threshold):
+                    # Check for the characteristic dip pattern
+                    bottom_angle = frame_metrics[bottom_frame_index].back_angle
+                    pre_bottom = np.mean([fm.back_angle for fm in frame_metrics[max(0, bottom_frame_index-3):bottom_frame_index]])
+                    post_bottom = np.mean([fm.back_angle for fm in frame_metrics[bottom_frame_index+1:min(len(frame_metrics), bottom_frame_index+4)]])
+                    
+                    # Butt wink: back angle drops significantly at bottom then recovers
+                    if ((pre_bottom - bottom_angle > self.config.butt_wink_bottom_variation_threshold) and 
+                        (post_bottom - bottom_angle > self.config.butt_wink_bottom_variation_threshold)):
+                        severity = min(25, back_angle_range * 1.2)
+                        faults.append(FaultType.BAD_BACK_WARP.value)
+                        penalties.append({
+                            'reason': 'Butt wink detected - lower back rounding at bottom position',
+                            'amount': severity
+                        })
+                        
+        except Exception as e:
+            logger.warning(f"ButtWinkAnalyzer error: {e}")
+        
+        return {
+            'faults': faults,
+            'penalties': penalties,
+            'bonuses': bonuses
+        }
+
+class KneeValgusAnalyzer(BaseAnalyzer):
+    """Analyzes for knee valgus (knees caving inward)"""
+    
+    def __init__(self, config: ThresholdConfig):
+        super().__init__()
+        if not isinstance(config, ThresholdConfig):
+            raise TypeError("KneeValgusAnalyzer requires a valid ThresholdConfig object")
+        self.config = config
+    
+    def _check_difficulty(self, difficulty: str) -> bool:
+        return difficulty in ['casual', 'professional']
+    
+    def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
+        if not frame_metrics:
+            return {'faults': [], 'penalties': [], 'bonuses': []}
+        
+        faults, penalties, bonuses = [], [], []
+        
+        valgus_detected = False
+        max_valgus_severity = 0
+        
+        for metrics in frame_metrics:
+            try:
+                # Check if we have knee and ankle position data
+                if (metrics.left_knee_pos and metrics.right_knee_pos and 
+                    metrics.left_ankle_pos and metrics.right_ankle_pos):
+                    
+                    # Calculate horizontal distances
+                    knee_distance = abs(metrics.left_knee_pos.x - metrics.right_knee_pos.x)
+                    ankle_distance = abs(metrics.left_ankle_pos.x - metrics.right_ankle_pos.x)
+                    
+                    # Knee valgus ratio - knees should be at least as wide as ankles
+                    if ankle_distance > 0:
+                        valgus_ratio = knee_distance / ankle_distance
+                        
+                        # Detect knee valgus using config threshold
+                        if valgus_ratio < self.config.knee_valgus_ratio_threshold:
+                            valgus_detected = True
+                            severity = (self.config.knee_valgus_ratio_threshold - valgus_ratio) * 100
+                            max_valgus_severity = max(max_valgus_severity, severity)
+                        
+            except (AttributeError, TypeError, ZeroDivisionError):
+                continue  # Skip frames with missing data
+        
+        if valgus_detected:
+            penalty_amount = min(self.config.knee_valgus_max_penalty, 
+                               max_valgus_severity * self.config.knee_valgus_penalty_multiplier)
+            faults.append(FaultType.BAD_INNER_THIGH.value)
+            penalties.append({
+                'reason': 'Knees caving inward - push knees out over toes',
+                'amount': penalty_amount
+            })
+        
+        return {
+            'faults': faults,
+            'penalties': penalties,
+            'bonuses': bonuses
+        }
+
+class HeadPositionAnalyzer(BaseAnalyzer):
+    """Analyzes head position during the squat"""
+    
+    def __init__(self, config: ThresholdConfig):
+        super().__init__()
+        if not isinstance(config, ThresholdConfig):
+            raise TypeError("HeadPositionAnalyzer requires a valid ThresholdConfig object")
+        self.config = config
+    
+    def _check_difficulty(self, difficulty: str) -> bool:
+        return difficulty in ['casual', 'professional']
+    
+    def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
+        if not frame_metrics:
+            return {'faults': [], 'penalties': [], 'bonuses': []}
+        
+        faults, penalties, bonuses = [], [], []
+        
+        head_fault_count = 0
+        total_frames_checked = 0
+        
+        for metrics in frame_metrics:
+            try:
+                # Check if we have head and shoulder position data
+                if (metrics.nose_pos and metrics.left_shoulder_pos and metrics.right_shoulder_pos):
+                    
+                    # Calculate shoulder midpoint
+                    shoulder_mid_x = (metrics.left_shoulder_pos.x + metrics.right_shoulder_pos.x) / 2
+                    shoulder_mid_y = (metrics.left_shoulder_pos.y + metrics.right_shoulder_pos.y) / 2
+                    
+                    # Vector from shoulders to nose
+                    head_vector_x = metrics.nose_pos.x - shoulder_mid_x
+                    head_vector_y = metrics.nose_pos.y - shoulder_mid_y
+                    
+                    # Calculate head angle relative to vertical
+                    if abs(head_vector_y) > 0.01:  # Avoid division by zero
+                        head_angle = np.degrees(np.arctan(abs(head_vector_x) / abs(head_vector_y)))
+                        
+                        total_frames_checked += 1
+                        
+                        # Head should be relatively upright using config threshold
+                        if head_angle > self.config.head_position_angle_threshold:
+                            head_fault_count += 1
+                        
+            except (AttributeError, TypeError, ZeroDivisionError):
+                continue
+        
+        # If head position is bad in more than configured threshold of frames
+        if (total_frames_checked > 0 and 
+            (head_fault_count / total_frames_checked) > self.config.head_position_fault_ratio):
+            penalty_severity = min(self.config.head_position_max_penalty, 
+                                 (head_fault_count / total_frames_checked) * 25)
+            faults.append(FaultType.BAD_HEAD.value)
+            penalties.append({
+                'reason': 'Keep head up - looking down too much',
+                'amount': penalty_severity
+            })
+        
+        return {
+            'faults': faults,
+            'penalties': penalties,
+            'bonuses': bonuses
+        }
+
+class FootStabilityAnalyzer(BaseAnalyzer):
+    """Analyzes foot stability and heel lift during the squat"""
+    
+    def __init__(self, config: ThresholdConfig):
+        super().__init__()
+        if not isinstance(config, ThresholdConfig):
+            raise TypeError("FootStabilityAnalyzer requires a valid ThresholdConfig object")
+        self.config = config
+    
+    def _check_difficulty(self, difficulty: str) -> bool:
+        return difficulty in ['casual', 'professional']
+    
+    def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
+        if not frame_metrics:
+            return {'faults': [], 'penalties': [], 'bonuses': []}
+        
+        faults, penalties, bonuses = [], [], []
+        
+        try:
+            # Track heel positions over time
+            left_heel_heights = []
+            right_heel_heights = []
+            
+            for metrics in frame_metrics:
+                if metrics.left_heel_pos and metrics.right_heel_pos:
+                    left_heel_heights.append(metrics.left_heel_pos.y)
+                    right_heel_heights.append(metrics.right_heel_pos.y)
+            
+            if len(left_heel_heights) > 5 and len(right_heel_heights) > 5:
+                # Calculate heel lift (decrease in y-coordinate indicates lift)
+                left_heel_baseline = np.mean(left_heel_heights[:3])  # Initial position
+                right_heel_baseline = np.mean(right_heel_heights[:3])
+                
+                left_min_y = min(left_heel_heights)
+                right_min_y = min(right_heel_heights)
+                
+                # Check for significant heel lift (coordinate system dependent)
+                left_heel_lift = left_heel_baseline - left_min_y
+                right_heel_lift = right_heel_baseline - right_min_y
+                
+                max_heel_lift = max(left_heel_lift, right_heel_lift)
+                
+                # Threshold for heel lift detection (needs calibration)
+                heel_lift_threshold = 0.05  # 5% of frame height
+                
+                if max_heel_lift > heel_lift_threshold:
+                    penalty_amount = min(25, max_heel_lift * 200)
+                    faults.append(FaultType.BAD_TOE.value)
+                    penalties.append({
+                        'reason': 'Keep feet flat - heels lifting off ground',
+                        'amount': penalty_amount
+                    })
+                
+                # Check foot stability (heel position variance)
+                left_heel_stability = np.std(left_heel_heights)
+                right_heel_stability = np.std(right_heel_heights)
+                avg_foot_instability = (left_heel_stability + right_heel_stability) / 2
+                
+                if avg_foot_instability > 0.03:  # High variance indicates instability
+                    penalty_amount = min(15, avg_foot_instability * 300)
+                    faults.append(FaultType.FOOT_INSTABILITY.value)
+                    penalties.append({
+                        'reason': 'Unstable foot position - maintain stable base',
+                        'amount': penalty_amount
+                    })
+                
+        except Exception as e:
+            logger.warning(f"FootStabilityAnalyzer error: {e}")
+        
+        return {
+            'faults': faults,
+            'penalties': penalties,
+            'bonuses': bonuses
+        }
+
 class AnthropometricNormalizer:
     """
     Normalizes biomechanical thresholds and scores based on individual body proportions.
@@ -957,10 +1403,14 @@ class IntelligentFormGrader:
         # Initialize individual analyzers for modular approach with shared config
         self.analyzers = {
             'safety': SafetyAnalyzer(self.config),
-            'depth': DepthAnalyzer(),  # Will add config when implemented
+            'depth': DepthAnalyzer(self.config),
             'stability': StabilityAnalyzer(self.config),
-            'tempo': TempoAnalyzer(),  # Will add config when implemented
-            'symmetry': SymmetryAnalyzer()  # Will add config when implemented
+            'tempo': TempoAnalyzer(self.config),
+            'symmetry': SymmetryAnalyzer(self.config),
+            'butt_wink': ButtWinkAnalyzer(self.config),
+            'knee_valgus': KneeValgusAnalyzer(self.config),
+            'head_position': HeadPositionAnalyzer(self.config),
+            'foot_stability': FootStabilityAnalyzer(self.config),
         }
 
         # Set initial difficulty
@@ -1076,14 +1526,262 @@ class IntelligentFormGrader:
                 analyzer.min_visibility_threshold = 0.8
     
 
+    def _validate_input_contracts(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
+        """
+        TASK 1: Validate that input data meets basic contracts for reliable analysis.
+        Essential for dissertation-level robustness.
+        """
+        validation_result = {
+            'is_valid': True,
+            'error_message': '',
+            'warnings': [],
+            'data_quality_score': 0.0
+        }
+        
+        # Check 1: Minimum frame count
+        if len(frame_metrics) < 10:
+            validation_result['is_valid'] = False
+            validation_result['error_message'] = f"Insufficient data: {len(frame_metrics)} frames (minimum: 10)"
+            return validation_result
+        
+        # Check 2: Data integrity
+        valid_frames = 0
+        total_visibility = 0.0
+        
+        for i, fm in enumerate(frame_metrics):
+            if fm is None:
+                validation_result['warnings'].append(f"Frame {i}: Null frame metrics")
+                continue
+                
+            # Check landmark visibility
+            if fm.landmark_visibility < 0.5:
+                validation_result['warnings'].append(f"Frame {i}: Low visibility ({fm.landmark_visibility:.2f})")
+            
+            # Check for valid angle measurements
+            if fm.knee_angle_left <= 0 or fm.knee_angle_right <= 0:
+                validation_result['warnings'].append(f"Frame {i}: Invalid knee angles")
+                continue
+                
+            valid_frames += 1
+            total_visibility += fm.landmark_visibility
+        
+        # Check 3: Minimum valid frame ratio
+        valid_frame_ratio = valid_frames / len(frame_metrics)
+        if valid_frame_ratio < 0.7:
+            validation_result['is_valid'] = False
+            validation_result['error_message'] = f"Too many invalid frames: {valid_frame_ratio:.1%} valid (minimum: 70%)"
+            return validation_result
+        
+        # Calculate data quality score
+        avg_visibility = total_visibility / valid_frames if valid_frames > 0 else 0
+        validation_result['data_quality_score'] = (valid_frame_ratio * 0.6) + (avg_visibility * 0.4)
+        
+        if validation_result['data_quality_score'] < 0.6:
+            validation_result['warnings'].append(f"Low data quality score: {validation_result['data_quality_score']:.2f}")
+        
+        return validation_result
+
+    def _get_active_analyzers(self) -> Dict[str, BaseAnalyzer]:
+        """Get analyzers that should be active for current difficulty level"""
+        active_analyzers = {}
+        
+        for name, analyzer in self.analyzers.items():
+            if analyzer.can_analyze([], self.difficulty):  # Just check difficulty, not data yet
+                active_analyzers[name] = analyzer
+        
+        logger.debug(f"Active analyzers for {self.difficulty}: {list(active_analyzers.keys())}")
+        return active_analyzers
+
+    def _check_data_requirements(self, frame_metrics: List[BiomechanicalMetrics], 
+                               active_analyzers: Dict[str, BaseAnalyzer]) -> Dict[str, Any]:
+        """
+        TASK 1: Check if active analyzers have the data they need.
+        Prevents silent failures of new analyzers.
+        """
+        requirements_result = {
+            'all_met': True,
+            'missing': [],
+            'analyzer_status': {}
+        }
+        
+        if not frame_metrics:
+            requirements_result['all_met'] = False
+            requirements_result['missing'].append('No frame metrics provided')
+            return requirements_result
+        
+        # Check first valid frame for data availability
+        sample_frame = next((fm for fm in frame_metrics if fm), None)
+        if not sample_frame:
+            requirements_result['all_met'] = False
+            requirements_result['missing'].append('No valid frame metrics found')
+            return requirements_result
+        
+        # Check analyzer-specific requirements
+        for analyzer_name, analyzer in active_analyzers.items():
+            status = {'can_analyze': True, 'missing_data': []}
+            
+            # Check if new analyzers have the raw landmark data they need
+            if analyzer_name in ['knee_valgus', 'head_position', 'foot_stability', 'butt_wink']:
+                if not hasattr(sample_frame, 'raw_landmarks') or not sample_frame.raw_landmarks:
+                    status['can_analyze'] = False
+                    status['missing_data'].append('raw_landmarks')
+                    requirements_result['missing'].append(f"{analyzer_name}: missing raw_landmarks")
+            
+            # Check visibility requirements
+            avg_visibility = np.mean([fm.landmark_visibility for fm in frame_metrics if fm])
+            min_visibility = getattr(analyzer, 'min_visibility_threshold', 0.5)
+            if avg_visibility < min_visibility:
+                status['can_analyze'] = False
+                status['missing_data'].append(f'visibility too low: {avg_visibility:.2f}')
+                requirements_result['missing'].append(f"{analyzer_name}: insufficient visibility")
+            
+            requirements_result['analyzer_status'][analyzer_name] = status
+            
+            if not status['can_analyze']:
+                requirements_result['all_met'] = False
+        
+        return requirements_result
+
+    def _get_skill_based_weights(self) -> Dict[str, float]:
+        """
+        TASK 5: Dynamic skill-based weighting system.
+        
+        Different skill levels focus on different aspects of movement quality:
+        - Beginners: Heavy emphasis on safety and basic depth
+        - Intermediate: Balanced focus with tempo and stability
+        - Advanced: Fine-tuned biomechanics and symmetry
+        - Professional: Full analysis including advanced patterns
+        
+        Returns:
+            Dictionary of analyzer weights that sum to 1.0
+        """
+        skill_level = self.user_profile.skill_level if self.user_profile else UserLevel.BEGINNER
+        
+        if skill_level == UserLevel.BEGINNER:
+            # Beginners: Focus heavily on safety and basic movement patterns
+            return {
+                'safety': 0.50,       # Dominant focus on safe movement
+                'depth': 0.30,        # Basic depth achievement
+                'stability': 0.20,    # Basic balance
+                'tempo': 0.0,         # Not evaluated yet
+                'symmetry': 0.0,      # Not evaluated yet
+                'butt_wink': 0.0,     # Too advanced
+                'knee_valgus': 0.0,   # Too advanced
+                'head_position': 0.0, # Too advanced
+                'foot_stability': 0.0 # Too advanced
+            }
+        
+        elif skill_level == UserLevel.INTERMEDIATE:
+            # Intermediate: Balanced approach with tempo introduction
+            return {
+                'safety': 0.35,       # Still important but reduced
+                'depth': 0.25,        # Consistent depth expected
+                'stability': 0.20,    # Good stability expected
+                'tempo': 0.15,        # Tempo control introduced
+                'symmetry': 0.05,     # Basic symmetry awareness
+                'butt_wink': 0.0,     # Not yet evaluated
+                'knee_valgus': 0.0,   # Not yet evaluated
+                'head_position': 0.0, # Not yet evaluated
+                'foot_stability': 0.0 # Not yet evaluated
+            }
+        
+        elif skill_level == UserLevel.ADVANCED:
+            # Advanced: Full biomechanical analysis with fine details
+            return {
+                'safety': 0.25,       # Expected to be safe
+                'depth': 0.20,        # Expected to hit depth
+                'stability': 0.15,    # Expected to be stable
+                'tempo': 0.15,        # Good tempo control expected
+                'symmetry': 0.10,     # Symmetry becomes important
+                'butt_wink': 0.05,    # Advanced pattern awareness
+                'knee_valgus': 0.05,  # Advanced pattern awareness
+                'head_position': 0.03, # Fine motor control
+                'foot_stability': 0.02 # Fine stability control
+            }
+        
+        elif skill_level == UserLevel.EXPERT:
+            # Expert: Comprehensive analysis of all movement patterns
+            return {
+                'safety': 0.20,       # Safety assumed, deductions for violations
+                'depth': 0.15,        # Precision in depth control
+                'stability': 0.15,    # Advanced stability patterns
+                'tempo': 0.15,        # Precise tempo control
+                'symmetry': 0.15,     # High symmetry standards
+                'butt_wink': 0.08,    # Detailed spinal mechanics
+                'knee_valgus': 0.07,  # Detailed knee tracking
+                'head_position': 0.03, # Complete motor control
+                'foot_stability': 0.02 # Complete stability control
+            }
+        
+        else:
+            # Fallback to intermediate weights
+            self.logger.warning(f"Unknown skill level {skill_level}, using intermediate weights")
+            return self._get_skill_based_weights_for_intermediate()
+    
+    def _get_skill_based_weights_for_intermediate(self) -> Dict[str, float]:
+        """Helper method for fallback intermediate weights"""
+        return {
+            'safety': 0.35, 'depth': 0.25, 'stability': 0.20, 'tempo': 0.15, 'symmetry': 0.05,
+            'butt_wink': 0.0, 'knee_valgus': 0.0, 'head_position': 0.0, 'foot_stability': 0.0
+        }
+    
+    def _get_analyzer_priority(self, analyzer_name: str) -> int:
+        """
+        Get priority ranking for analyzers (1 = highest priority).
+        Used for feedback prioritization and fault hierarchy.
+        """
+        priority_map = {
+            'safety': 1,        # Most critical
+            'depth': 2,         # Core movement quality
+            'stability': 3,     # Important for injury prevention
+            'tempo': 4,         # Movement control
+            'symmetry': 5,      # Balance and coordination
+            'butt_wink': 6,     # Advanced biomechanics
+            'knee_valgus': 7,   # Advanced biomechanics
+            'head_position': 8, # Fine motor control
+            'foot_stability': 9 # Fine stability control
+        }
+        return priority_map.get(analyzer_name, 10)
+
     
     def grade_repetition(self, frame_metrics: List[BiomechanicalMetrics]) -> dict:
         """
-        FIXED: Balanced multi-component scoring system (replaces the old broken method).
+        ENHANCED: Robust multi-component scoring with input validation.
         
         This method prevents the "broken compass" problem by scoring each component
         independently and combining them with weights, so no single issue destroys the entire score.
         """
+        # TASK 1: Input validation and contract enforcement
+        validation_result = self._validate_input_contracts(frame_metrics)
+        if not validation_result['is_valid']:
+            logger.error(f"Input validation failed: {validation_result['error_message']}")
+            return {
+                'score': 0,
+                'faults': ['SYSTEM_ERROR'],
+                'feedback': [f"Analysis failed: {validation_result['error_message']}"],
+                'scoring_method': 'input_validation_failed',
+                'validation_result': validation_result
+            }
+        
+        # Log any data quality warnings
+        for warning in validation_result['warnings']:
+            logger.warning(f"Data quality issue: {warning}")
+        
+        # TASK 1: Check analyzer-specific data requirements
+        active_analyzers = self._get_active_analyzers()
+        data_requirements = self._check_data_requirements(frame_metrics, active_analyzers)
+        
+        if not data_requirements['all_met']:
+            logger.warning(f"Some analyzers cannot run due to missing data: {data_requirements['missing']}")
+            # Continue with reduced analyzer set rather than failing completely
+            usable_analyzers = {
+                name: analyzer for name, analyzer in active_analyzers.items()
+                if data_requirements['analyzer_status'][name]['can_analyze']
+            }
+            logger.info(f"Proceeding with {len(usable_analyzers)}/{len(active_analyzers)} analyzers")
+        else:
+            usable_analyzers = active_analyzers
+        
         # Ensure we're working with a fresh session (prevents carryover)
         self.ensure_fresh_session()
         
@@ -1093,54 +1791,50 @@ class IntelligentFormGrader:
                 'score': 0,
                 'faults': ['NO_DATA'],
                 'feedback': ["No movement data available for analysis."],
-                'scoring_method': 'balanced_multi_component'
+                'scoring_method': 'input_validation_failed',
+                'validation_result': {'is_valid': False, 'error_message': 'No data provided'}
             }
         
         rep_number = len(self.recent_scores) + 1
-        logger.info(f"FormGrader: BALANCED ANALYSIS - Rep #{rep_number}")
+        logger.info(f"FormGrader: VALIDATED ANALYSIS - Rep #{rep_number} with {len(usable_analyzers)} analyzers")
         
-        # Calculate component scores separately - each gets independent assessment
+        # TASK 5: Get skill-based dynamic weights
+        skill_weights = self._get_skill_based_weights()
+        
+        # Calculate component scores separately using dynamic weights
         component_scores = {}
         all_faults = []
         analysis_details = {}
         
-        # 1. SAFETY SCORE (Most Important - 50% weight)
-        safety_result = self.analyzers['safety'].analyze(frame_metrics)
-        safety_score = self._calculate_component_score(safety_result, base_score=100)
-        component_scores['safety'] = {
-            'score': safety_score,
-            'weight': 0.50,
-            'priority': 1,
-            'result': safety_result
-        }
-        all_faults.extend(safety_result.get('faults', []))
-        analysis_details['safety'] = safety_result
-        
-        # 2. DEPTH SCORE (Important - 30% weight)
-        if self.analyzers['depth'].can_analyze(frame_metrics, self.difficulty):
-            depth_result = self.analyzers['depth'].analyze(frame_metrics)
-            depth_score = self._calculate_component_score(depth_result, base_score=100)
-            component_scores['depth'] = {
-                'score': depth_score,
-                'weight': 0.30,
-                'priority': 2,
-                'result': depth_result
+        # Analyze each component based on skill level and active analyzers
+        for analyzer_name, analyzer in usable_analyzers.items():
+            weight = skill_weights.get(analyzer_name, 0.0)
+            
+            # Skip analyzers with zero weight for this skill level
+            if weight <= 0.0:
+                logger.debug(f"Skipping {analyzer_name} (weight: {weight:.3f} for {self.user_profile.skill_level})")
+                continue
+            
+            # Only analyze if the analyzer can handle this difficulty/data
+            if hasattr(analyzer, 'can_analyze') and not analyzer.can_analyze(frame_metrics, self.difficulty):
+                logger.debug(f"Skipping {analyzer_name} - cannot analyze current difficulty/data")
+                continue
+            
+            # Perform analysis
+            result = analyzer.analyze(frame_metrics)
+            score = self._calculate_component_score(result, base_score=100)
+            
+            component_scores[analyzer_name] = {
+                'score': score,
+                'weight': weight,
+                'priority': self._get_analyzer_priority(analyzer_name),
+                'result': result
             }
-            all_faults.extend(depth_result.get('faults', []))
-            analysis_details['depth'] = depth_result
-        
-        # 3. STABILITY SCORE (Refinement - 20% weight)
-        if self.analyzers['stability'].can_analyze(frame_metrics, self.difficulty):
-            stability_result = self.analyzers['stability'].analyze(frame_metrics)
-            stability_score = self._calculate_component_score(stability_result, base_score=100)
-            component_scores['stability'] = {
-                'score': stability_score,
-                'weight': 0.20,
-                'priority': 3,
-                'result': stability_result
-            }
-            all_faults.extend(stability_result.get('faults', []))
-            analysis_details['stability'] = stability_result
+            
+            all_faults.extend(result.get('faults', []))
+            analysis_details[analyzer_name] = result
+            
+            logger.debug(f"FormGrader: {analyzer_name.title()}: {score:.1f}% (weight: {weight:.1%})")
         
         # Calculate weighted final score - PREVENTS "broken compass" problem
         weighted_score = 0.0
@@ -1149,28 +1843,32 @@ class IntelligentFormGrader:
         for component, data in component_scores.items():
             weighted_score += data['score'] * data['weight']
             total_weight += data['weight']
-            logger.debug(f"FormGrader: {component.title()}: {data['score']:.1f}% (weight: {data['weight']:.0%})")
         
         base_score = weighted_score / total_weight if total_weight > 0 else 0
         
         # ENHANCEMENT: Add data-driven variation based on actual movement quality
         final_score = int(self._add_realistic_variation(base_score, frame_metrics, rep_number))
         
+        # TASK 6: Apply intelligent fault hierarchy to prevent double-penalization
+        filtered_faults = self._apply_intelligent_fault_hierarchy(all_faults, component_scores)
+        
         # Generate varied, contextual feedback
         feedback = self._generate_prioritized_feedback(component_scores, final_score, rep_number)
         
         logger.info(f"FormGrader: SCORE: {base_score:.1f}% → {final_score}% (after data-driven variation)")
+        logger.info(f"FormGrader: FAULTS: {len(all_faults)} total → {len(filtered_faults)} after hierarchy filtering")
         
         self.recent_scores.append(final_score)
         
         return {
             'score': final_score,
             'base_score': base_score,  # FIXED: Include base score for validation
-            'faults': all_faults,
+            'faults': filtered_faults,  # TASK 6: Use hierarchy-filtered faults
+            'raw_faults': all_faults,   # Keep original for debugging/analysis
             'feedback': feedback,
             'component_scores': component_scores,
             'analysis_details': analysis_details,
-            'scoring_method': 'balanced_multi_component',
+            'scoring_method': 'balanced_multi_component_with_hierarchy',
             'phase_durations': {'total': len(frame_metrics) / 30.0}
         }
     
@@ -1188,6 +1886,102 @@ class IntelligentFormGrader:
         
         return max(0, min(100, score))
     
+    def _apply_intelligent_fault_hierarchy(self, all_faults: List[str], component_scores: Dict[str, Any]) -> List[str]:
+        """
+        TASK 6: Intelligent fault hierarchy to prevent double-penalization.
+        
+        Many movement faults are related and stem from the same root cause.
+        This method identifies fault relationships and filters redundant penalties
+        to provide more accurate and fair scoring.
+        
+        Common fault relationships:
+        - Knee tracking issues often cause stability problems
+        - Poor depth often correlates with forward lean
+        - Head position issues are secondary to core stability
+        - Foot stability affects overall stability
+        
+        Returns:
+            Filtered list of primary faults, removing redundant secondary faults
+        """
+        if not all_faults:
+            return all_faults
+        
+        # Define fault relationships: primary_fault -> [secondary_faults_to_suppress]
+        fault_hierarchy = {
+            # Safety issues take precedence
+            'DANGEROUS_LEAN': ['POOR_DEPTH', 'HEAD_FORWARD', 'STABILITY_ISSUE'],
+            'KNEE_COLLAPSE': ['KNEE_TRACKING', 'STABILITY_ISSUE', 'ASYMMETRY'],
+            'HEEL_LIFT': ['FOOT_POSITION', 'ANKLE_MOBILITY', 'STABILITY_ISSUE'],
+            
+            # Core movement issues suppress related secondary issues
+            'POOR_DEPTH': ['BUTT_WINK_MINOR', 'FORWARD_LEAN_MINOR'],
+            'EXCESSIVE_FORWARD_LEAN': ['HEAD_FORWARD', 'CHEST_DROP'],
+            'BUTT_WINK': ['SPINAL_FLEXION', 'PELVIC_TILT'],
+            
+            # Stability hierarchy
+            'MAJOR_STABILITY_ISSUE': ['MINOR_STABILITY_ISSUE', 'FOOT_MOVEMENT', 'BALANCE_SHIFT'],
+            'CENTER_OF_MASS_SHIFT': ['WEIGHT_DISTRIBUTION', 'LATERAL_DRIFT'],
+            
+            # Tempo and symmetry hierarchy
+            'ERRATIC_TEMPO': ['TEMPO_INCONSISTENCY', 'RUSH_ASCENT'],
+            'MAJOR_ASYMMETRY': ['MINOR_ASYMMETRY', 'LEFT_RIGHT_DIFFERENCE'],
+        }
+        
+        # Count fault frequencies to identify patterns
+        fault_counts = {}
+        for fault in all_faults:
+            fault_counts[fault] = fault_counts.get(fault, 0) + 1
+        
+        # Identify primary faults (high priority, frequent, or severe)
+        primary_faults = set()
+        secondary_faults = set()
+        
+        for fault in all_faults:
+            # Check if this fault is a primary fault that suppresses others
+            if fault in fault_hierarchy:
+                primary_faults.add(fault)
+                # Mark all its secondary faults for potential suppression
+                for secondary in fault_hierarchy[fault]:
+                    if secondary in all_faults:
+                        secondary_faults.add(secondary)
+        
+        # Additional logic: High-frequency faults become primary
+        for fault, count in fault_counts.items():
+            if count >= 3:  # Fault occurs multiple times
+                primary_faults.add(fault)
+        
+        # Filter based on component scores - if a component scored very low,
+        # its primary fault takes precedence over secondary issues
+        for component_name, data in component_scores.items():
+            score = data['score']
+            if score < 60:  # Component failed significantly
+                # Find faults from this component and make them primary
+                component_faults = data['result'].get('faults', [])
+                for fault in component_faults:
+                    if fault in all_faults:
+                        primary_faults.add(fault)
+        
+        # Create filtered fault list
+        filtered_faults = []
+        for fault in all_faults:
+            # Keep fault if it's:
+            # 1. A primary fault, OR
+            # 2. Not suppressed by any primary fault, OR  
+            # 3. Occurs very frequently (critical pattern)
+            if (fault in primary_faults or 
+                fault not in secondary_faults or 
+                fault_counts.get(fault, 0) >= 5):
+                filtered_faults.append(fault)
+        
+        # Log hierarchy decisions for academic transparency
+        suppressed_count = len(all_faults) - len(filtered_faults)
+        if suppressed_count > 0:
+            self.logger.debug(f"Fault hierarchy: suppressed {suppressed_count} secondary faults")
+            self.logger.debug(f"Primary faults: {list(primary_faults)}")
+            self.logger.debug(f"Suppressed: {secondary_faults - primary_faults}")
+        
+        return filtered_faults
+
     def _add_realistic_variation(self, base_score: float, frame_metrics: List, rep_number: int) -> float:
         """
         Add DATA-DRIVEN variation based on actual movement quality analysis.
