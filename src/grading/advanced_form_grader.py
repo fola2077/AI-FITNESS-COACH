@@ -967,7 +967,7 @@ class TempoAnalyzer(BaseAnalyzer):
         self.config = config
     
     def _check_difficulty(self, difficulty: str) -> bool:
-        return difficulty in ['casual', 'professional']
+        return difficulty in ['casual', 'professional', 'expert']
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
         duration = len(frame_metrics) / self.config.frame_rate
@@ -999,7 +999,7 @@ class SymmetryAnalyzer(BaseAnalyzer):
         self.config = config
     
     def _check_difficulty(self, difficulty: str) -> bool:
-        return difficulty == 'professional'
+        return difficulty in ['professional', 'expert']
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
         left_knee = [fm.knee_angle_left for fm in frame_metrics if fm.knee_angle_left > 0]
@@ -1032,7 +1032,7 @@ class ButtWinkAnalyzer(BaseAnalyzer):
         self.config = config
     
     def _check_difficulty(self, difficulty: str) -> bool:
-        return difficulty in ['casual', 'professional']
+        return difficulty in ['casual', 'professional', 'expert']
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
         if len(frame_metrics) < 15:
@@ -1094,7 +1094,7 @@ class KneeValgusAnalyzer(BaseAnalyzer):
         self.config = config
     
     def _check_difficulty(self, difficulty: str) -> bool:
-        return difficulty in ['casual', 'professional']
+        return difficulty in ['casual', 'professional', 'expert']
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
         if not frame_metrics:
@@ -1153,7 +1153,7 @@ class HeadPositionAnalyzer(BaseAnalyzer):
         self.config = config
     
     def _check_difficulty(self, difficulty: str) -> bool:
-        return difficulty in ['casual', 'professional']
+        return difficulty in ['casual', 'professional', 'expert']
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
         if not frame_metrics:
@@ -1217,7 +1217,7 @@ class FootStabilityAnalyzer(BaseAnalyzer):
         self.config = config
     
     def _check_difficulty(self, difficulty: str) -> bool:
-        return difficulty in ['casual', 'professional']
+        return difficulty in ['casual', 'professional', 'expert']
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
         if not frame_metrics:
@@ -1501,9 +1501,13 @@ class IntelligentFormGrader:
         self.last_activity_time = current_time
     
     def set_difficulty(self, difficulty: str) -> None:
-        """Set difficulty level with validation"""
+        """Set difficulty level with validation - UPDATED for 4 levels"""
         difficulty = difficulty.lower()
-        if difficulty not in ['beginner', 'casual', 'professional']:
+        
+        # UPDATED: Support 4 difficulty levels to match skill levels
+        valid_difficulties = ['beginner', 'casual', 'professional', 'expert']
+        
+        if difficulty not in valid_difficulties:
             logging.warning(f"Invalid difficulty '{difficulty}', defaulting to 'casual'")
             difficulty = 'casual'
         
@@ -1512,18 +1516,23 @@ class IntelligentFormGrader:
         logger.debug(f"FormGrader: Difficulty updated to: {self.difficulty}")
     
     def _update_difficulty_thresholds(self) -> None:
-        """Update analyzer configurations based on difficulty level"""
+        """Update analyzer configurations based on difficulty level - UPDATED for 4 levels"""
         if self.difficulty == 'beginner':
-            # More forgiving thresholds, focus only on safety
-            self.analyzers['safety'].min_visibility_threshold = 0.6
+            # Most forgiving thresholds, focus only on safety
+            for analyzer in self.analyzers.values():
+                analyzer.min_visibility_threshold = 0.6
         elif self.difficulty == 'casual':
-            # Standard thresholds, include depth analysis
-            self.analyzers['safety'].min_visibility_threshold = 0.7
-            self.analyzers['depth'].min_visibility_threshold = 0.7
-        else:  # professional
-            # Strict thresholds, all analyzers active
+            # Standard thresholds, include basic analysis
+            for analyzer in self.analyzers.values():
+                analyzer.min_visibility_threshold = 0.7
+        elif self.difficulty == 'professional':
+            # Stricter thresholds, most analyzers active
             for analyzer in self.analyzers.values():
                 analyzer.min_visibility_threshold = 0.8
+        elif self.difficulty == 'expert':
+            # Strictest thresholds, all analyzers active with high precision
+            for analyzer in self.analyzers.values():
+                analyzer.min_visibility_threshold = 0.85
     
 
     def _validate_input_contracts(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
@@ -1888,17 +1897,14 @@ class IntelligentFormGrader:
     
     def _apply_intelligent_fault_hierarchy(self, all_faults: List[str], component_scores: Dict[str, Any]) -> List[str]:
         """
-        TASK 6: Intelligent fault hierarchy to prevent double-penalization.
+        TASK 6: Intelligent fault hierarchy to prevent double-penalization - FIXED VERSION.
+        
+        CRITICAL FIX: Use actual FaultType enum values that analyzers generate,
+        not made-up fault names that never match.
         
         Many movement faults are related and stem from the same root cause.
         This method identifies fault relationships and filters redundant penalties
         to provide more accurate and fair scoring.
-        
-        Common fault relationships:
-        - Knee tracking issues often cause stability problems
-        - Poor depth often correlates with forward lean
-        - Head position issues are secondary to core stability
-        - Foot stability affects overall stability
         
         Returns:
             Filtered list of primary faults, removing redundant secondary faults
@@ -1906,79 +1912,89 @@ class IntelligentFormGrader:
         if not all_faults:
             return all_faults
         
-        # Define fault relationships: primary_fault -> [secondary_faults_to_suppress]
+        # FIXED: Define fault relationships using ACTUAL fault strings generated by analyzers
+        # UPDATED: Keep partial_rep visible for better user feedback
         fault_hierarchy = {
-            # Safety issues take precedence
-            'DANGEROUS_LEAN': ['POOR_DEPTH', 'HEAD_FORWARD', 'STABILITY_ISSUE'],
-            'KNEE_COLLAPSE': ['KNEE_TRACKING', 'STABILITY_ISSUE', 'ASYMMETRY'],
-            'HEEL_LIFT': ['FOOT_POSITION', 'ANKLE_MOBILITY', 'STABILITY_ISSUE'],
+            # Safety faults take highest precedence but don't suppress effectiveness feedback
+            'SEVERE_BACK_ROUNDING': {  # Actual string generated by SafetyAnalyzer
+                'suppresses': [
+                    'moderate_back_rounding',  # Less severe back issue
+                    'BAD_BACK_ROUND',          # General back issue
+                    'BAD_BACK_WARP',           # Butt wink is secondary to severe rounding
+                    'BAD_HEAD'                 # Head position affected by back rounding
+                    # REMOVED: 'partial_rep' - Users need to see depth issues separately!
+                ],
+                'reasoning': 'Severe back rounding is critical safety issue but users still need depth feedback'
+            },
             
-            # Core movement issues suppress related secondary issues
-            'POOR_DEPTH': ['BUTT_WINK_MINOR', 'FORWARD_LEAN_MINOR'],
-            'EXCESSIVE_FORWARD_LEAN': ['HEAD_FORWARD', 'CHEST_DROP'],
-            'BUTT_WINK': ['SPINAL_FLEXION', 'PELVIC_TILT'],
+            # Depth hierarchy - most severe depth fault suppresses lesser ones
+            'BAD_SHALLOW_DEPTH': {
+                'suppresses': [
+                    'INSUFFICIENT_DEPTH'     # Less severe depth issue
+                    # REMOVED: 'partial_rep' - Let partial_rep show for different reasons
+                ],
+                'reasoning': 'Very shallow squats encompass insufficient depth but not all partial reps'
+            },
             
-            # Stability hierarchy
-            'MAJOR_STABILITY_ISSUE': ['MINOR_STABILITY_ISSUE', 'FOOT_MOVEMENT', 'BALANCE_SHIFT'],
-            'CENTER_OF_MASS_SHIFT': ['WEIGHT_DISTRIBUTION', 'LATERAL_DRIFT'],
+            # Stability hierarchy - severe instability encompasses other balance issues
+            'SEVERE_INSTABILITY': {
+                'suppresses': [
+                    'moderate_instability',   # Less severe instability
+                    'FOOT_INSTABILITY',       # Foot issues are secondary to major instability
+                    'BAD_TOE'                 # Heel lift is secondary to major balance issues
+                ],
+                'reasoning': 'Major stability issues encompass minor balance problems'
+            },
             
-            # Tempo and symmetry hierarchy
-            'ERRATIC_TEMPO': ['TEMPO_INCONSISTENCY', 'RUSH_ASCENT'],
-            'MAJOR_ASYMMETRY': ['MINOR_ASYMMETRY', 'LEFT_RIGHT_DIFFERENCE'],
+            # Knee tracking hierarchy - major knee issues suppress minor ones
+            'BAD_INNER_THIGH': {  # Knee valgus
+                'suppresses': [
+                    'KNEE_VALGUS',            # Alternative knee tracking fault
+                    'FOOT_INSTABILITY'        # Foot position often relates to knee tracking
+                ],
+                'reasoning': 'Major knee tracking issues cause related stability problems'
+            },
+            
+            # Tempo hierarchy - severe tempo issues suppress related faults
+            'TOO_FAST': {  # Actual fault generated by TempoAnalyzer
+                'suppresses': [
+                    'erratic_tempo',          # Related tempo issue
+                    'tempo_inconsistency'     # Consistency is secondary to speed issues
+                ],
+                'reasoning': 'Major tempo violations encompass minor timing issues'
+            }
         }
         
-        # Count fault frequencies to identify patterns
-        fault_counts = {}
-        for fault in all_faults:
-            fault_counts[fault] = fault_counts.get(fault, 0) + 1
-        
-        # Identify primary faults (high priority, frequent, or severe)
-        primary_faults = set()
-        secondary_faults = set()
+        # Find which primary faults are present
+        primary_faults_present = set()
+        faults_to_suppress = set()
         
         for fault in all_faults:
-            # Check if this fault is a primary fault that suppresses others
             if fault in fault_hierarchy:
-                primary_faults.add(fault)
-                # Mark all its secondary faults for potential suppression
-                for secondary in fault_hierarchy[fault]:
-                    if secondary in all_faults:
-                        secondary_faults.add(secondary)
-        
-        # Additional logic: High-frequency faults become primary
-        for fault, count in fault_counts.items():
-            if count >= 3:  # Fault occurs multiple times
-                primary_faults.add(fault)
-        
-        # Filter based on component scores - if a component scored very low,
-        # its primary fault takes precedence over secondary issues
-        for component_name, data in component_scores.items():
-            score = data['score']
-            if score < 60:  # Component failed significantly
-                # Find faults from this component and make them primary
-                component_faults = data['result'].get('faults', [])
-                for fault in component_faults:
-                    if fault in all_faults:
-                        primary_faults.add(fault)
+                primary_faults_present.add(fault)
+                # Mark secondary faults for suppression
+                suppressed_faults = fault_hierarchy[fault]['suppresses']
+                for suppressed_fault in suppressed_faults:
+                    if suppressed_fault in all_faults:
+                        faults_to_suppress.add(suppressed_fault)
+                        self.logger.debug(f"Fault hierarchy: {fault} suppresses {suppressed_fault}")
         
         # Create filtered fault list
         filtered_faults = []
+        suppressed_count = 0
+        
         for fault in all_faults:
-            # Keep fault if it's:
-            # 1. A primary fault, OR
-            # 2. Not suppressed by any primary fault, OR  
-            # 3. Occurs very frequently (critical pattern)
-            if (fault in primary_faults or 
-                fault not in secondary_faults or 
-                fault_counts.get(fault, 0) >= 5):
+            if fault not in faults_to_suppress:
                 filtered_faults.append(fault)
+            else:
+                suppressed_count += 1
+                self.logger.debug(f"Suppressed secondary fault: {fault}")
         
         # Log hierarchy decisions for academic transparency
-        suppressed_count = len(all_faults) - len(filtered_faults)
         if suppressed_count > 0:
-            self.logger.debug(f"Fault hierarchy: suppressed {suppressed_count} secondary faults")
-            self.logger.debug(f"Primary faults: {list(primary_faults)}")
-            self.logger.debug(f"Suppressed: {secondary_faults - primary_faults}")
+            self.logger.info(f"Intelligent fault hierarchy: {suppressed_count} secondary faults suppressed")
+            self.logger.info(f"Primary faults present: {list(primary_faults_present)}")
+            self.logger.info(f"Filtered: {len(all_faults)} → {len(filtered_faults)} faults")
         
         return filtered_faults
 

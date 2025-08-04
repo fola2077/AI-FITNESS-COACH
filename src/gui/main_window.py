@@ -16,7 +16,7 @@ from PySide6.QtGui import (QImage, QPixmap, QAction, QFont, QPainter, QPen,
 from PySide6.QtCore import Qt, QTimer, QRect
 from src.capture.camera import CameraManager
 from src.processing.pose_processor import PoseProcessor
-from src.grading.advanced_form_grader import UserProfile, UserLevel, IntelligentFormGrader
+from src.grading.advanced_form_grader import UserProfile, UserLevel, IntelligentFormGrader, ThresholdConfig
 from src.pose.pose_detector import PoseDetector
 from src.utils.rep_counter import RepCounter
 from src.gui.widgets.settings_dialog import SettingsDialog
@@ -370,9 +370,17 @@ class MainWindow(QMainWindow):
         ui_settings = self.config_manager.get_ui_settings()
         self.resize(ui_settings.get('window_width', 1600), ui_settings.get('window_height', 1000))
         
-        # Create user profile
+        # UPDATED: Create threshold configuration (now required for Task 2)
+        self.threshold_config = ThresholdConfig.emergency_calibrated()
+        
+        # UPDATED: Create user profile with proper skill level mapping
         self.user_profile = UserProfile(user_id="main_user", skill_level=UserLevel.INTERMEDIATE)
-        self.pose_processor = PoseProcessor(user_profile=self.user_profile)
+        
+        # UPDATED: Create pose processor that will initialize form grader with proper config
+        self.pose_processor = PoseProcessor(
+            user_profile=self.user_profile,
+            threshold_config=self.threshold_config
+        )
         
         # Timers
         self.timer = QTimer(self)
@@ -510,8 +518,9 @@ class MainWindow(QMainWindow):
             }
         """)
         
+        # UPDATED: 4-level difficulty system
         self.difficulty_combo = QComboBox()
-        self.difficulty_combo.addItems(["Beginner", "Casual", "Professional"])
+        self.difficulty_combo.addItems(["Beginner", "Casual", "Professional", "Expert"])
         self.difficulty_combo.setCurrentText("Casual")
         
         controls_layout.addWidget(self.webcam_button)
@@ -1321,9 +1330,33 @@ class MainWindow(QMainWindow):
 
     # === REMAINING METHODS (keeping existing implementations) ===
     def on_difficulty_changed(self, text: str):
+        """Handle difficulty level changes with proper skill mapping"""
         difficulty = text.lower()
-        self.pose_processor.form_grader.set_difficulty(difficulty)
-        print(f"Difficulty changed to: {difficulty}")
+        
+        # UPDATED: Map UI difficulty levels to form grader skill levels
+        skill_mapping = {
+            "beginner": UserLevel.BEGINNER,
+            "casual": UserLevel.INTERMEDIATE,     # casual → intermediate  
+            "professional": UserLevel.ADVANCED,  # professional → advanced
+            "expert": UserLevel.EXPERT           # expert → expert
+        }
+        
+        # Update user profile skill level
+        new_skill_level = skill_mapping.get(difficulty, UserLevel.INTERMEDIATE)
+        self.user_profile.skill_level = new_skill_level
+        
+        # Update pose processor with new configuration
+        try:
+            self.pose_processor = PoseProcessor(
+                user_profile=self.user_profile,
+                threshold_config=self.threshold_config
+            )
+            print(f"Difficulty changed to: {difficulty} (Skill Level: {new_skill_level.value})")
+        except Exception as e:
+            print(f"Error updating difficulty: {e}")
+            # Fallback - just change the form grader difficulty if pose processor update fails
+            if hasattr(self.pose_processor, 'form_grader'):
+                self.pose_processor.form_grader.set_difficulty(difficulty)
     
     def show_enhanced_session_report(self):
         """Show comprehensive session report with duration and feedback"""

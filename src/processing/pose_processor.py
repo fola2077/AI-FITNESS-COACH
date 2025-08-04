@@ -10,7 +10,8 @@ from src.grading.advanced_form_grader import (
     IntelligentFormGrader,
     UserProfile,
     UserLevel,
-    BiomechanicalMetrics
+    BiomechanicalMetrics,
+    ThresholdConfig
 )
 from src.gui.widgets.session_report import SessionManager
 from src.utils.rep_counter import RepCounter, MovementPhase
@@ -25,14 +26,23 @@ class SessionState(Enum):
     PAUSED = "paused"
 
 class PoseProcessor:
-    def __init__(self, user_profile: UserProfile = None, enable_validation: bool = False):
+    def __init__(self, user_profile: UserProfile = None, threshold_config: ThresholdConfig = None, enable_validation: bool = False):
         self.pose_detector = PoseDetector()
         self.feedback_manager = FeedbackManager()
         self.session_manager = SessionManager()
         self.rep_counter = RepCounter(exercise_type="squat")
 
         self.user_profile = user_profile or UserProfile(user_id="default_user", skill_level=UserLevel.INTERMEDIATE)
-        self.form_grader = IntelligentFormGrader(self.user_profile)
+        
+        # UPDATED: Use provided threshold_config or create default one (required for Task 2)
+        self.threshold_config = threshold_config or ThresholdConfig.emergency_calibrated()
+        
+        # UPDATED: Pass both user_profile and config to form grader (now required)
+        self.form_grader = IntelligentFormGrader(
+            user_profile=self.user_profile,
+            difficulty="casual",  # Default difficulty
+            config=self.threshold_config
+        )
         
         # Validation system (optional for debugging)
         self.enable_validation = enable_validation
