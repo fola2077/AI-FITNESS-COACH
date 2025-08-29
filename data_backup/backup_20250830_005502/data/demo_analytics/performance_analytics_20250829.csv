@@ -1,0 +1,5 @@
+performance_band,session_count,percentage,min_score,max_score
+excellent,0,0.0,90,100
+good,0,0.0,75,89
+fair,0,0.0,60,74
+poor,1,100.0,0,59

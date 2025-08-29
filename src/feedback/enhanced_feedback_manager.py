@@ -208,12 +208,61 @@ class EnhancedFeedbackManager:
         
         return True
     
-    def process_pose_analysis(self, faults: List[str], angles: Dict[str, float], 
-                            phase: str, rep_count: int, form_score: int = None) -> None:
+    def process_pose_analysis(self, analysis_data=None, faults=None, angles=None, 
+                            phase=None, rep_count=None, form_score=None, **kwargs):
         """Enhanced version of the original pose analysis processing
         
-        This method maintains the original interface while adding intelligent processing.
+        This method is flexible and can accept either:
+        1. A single analysis_data dict containing all information
+        2. Individual parameters (backward compatible)
+        3. Mixed approach
+        
+        Args:
+            analysis_data: Dict containing analysis results (preferred)
+            faults: List of detected faults
+            angles: Dict of joint angles
+            phase: Current movement phase
+            rep_count: Current repetition count
+            form_score: Overall form score (0-100)
+            **kwargs: Additional parameters for future compatibility
         """
+        
+        # Handle flexible input formats
+        if analysis_data and isinstance(analysis_data, dict):
+            # Extract from analysis_data if not provided as individual args
+            faults = faults or analysis_data.get('faults', [])
+            angles = angles or analysis_data.get('angles', {}) or analysis_data.get('computed_angles', {})
+            phase = phase or analysis_data.get('phase', 'unknown') or analysis_data.get('detected_phase', 'unknown')
+            rep_count = rep_count or analysis_data.get('rep_count', 0) or analysis_data.get('rep', 0)
+            form_score = form_score or analysis_data.get('form_score') or analysis_data.get('overall_score')
+            
+            # Handle nested scores
+            if form_score is None and 'scores' in analysis_data:
+                scores = analysis_data['scores']
+                if isinstance(scores, dict):
+                    form_score = scores.get('overall', scores.get('form', scores.get('total')))
+        
+        # Provide safe defaults
+        faults = faults or []
+        angles = angles or {}
+        phase = phase or 'unknown'
+        rep_count = rep_count if rep_count is not None else 0
+        
+        # Log what we're processing (if logger available)
+        try:
+            if hasattr(self, 'logger'):
+                self.logger.debug(f"Processing pose analysis: phase={phase}, rep={rep_count}, faults={len(faults)}")
+        except:
+            pass
+        
+        # If no meaningful data, return early
+        if not faults and form_score is None:
+            return {
+                'status': 'skipped',
+                'reason': 'no_meaningful_data',
+                'phase': phase,
+                'rep_count': rep_count
+            }
         
         # Update user context
         self.user_context.session_rep_count = rep_count
@@ -249,6 +298,14 @@ class EnhancedFeedbackManager:
                 rep_count=rep_count,
                 form_score=form_score
             )
+        
+        return {
+            'status': 'success',
+            'phase': phase,
+            'rep_count': rep_count,
+            'faults_processed': len(faults),
+            'form_score': form_score
+        }
     
     def _determine_fault_severity(self, fault: str, angles: Dict[str, float], 
                                  form_score: int = None) -> str:

@@ -1,0 +1,2 @@
+user_id,analysis_date,total_sessions,total_reps,avg_reps_per_session,avg_form_score,best_form_score,recent_avg_score,improvement_points,consistency_score,avg_faults_per_session,first_session_date,last_session_date,training_duration_days
+demo_user_001,2025-08-29T17:44:55.361766,1,5,5.0,0.0,0.0,0.0,0,0,0.0,2025-08-29T17:44:54.808740,2025-08-29T17:44:54.808740,0

@@ -1,0 +1,15 @@
+AI Fitness Coach - User Progress Report
+==================================================
+
+User: demo_user_001
+Analysis Date: 2025-08-29T17:44:55.350621
+Training Duration: 0 days
+
+Performance Summary:
+- Total Sessions: 1
+- Total Reps: 5
+- Average Form Score: 0.0/100
+- Best Form Score: 0.0/100
+- Recent Average: 0.0/100
+- Improvement: +0.0 points
+- Consistency Score: 0.0/100

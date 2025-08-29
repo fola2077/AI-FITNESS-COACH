@@ -17,27 +17,86 @@ class VoiceFeedbackEngine:
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
         self.engine = None
+        self.use_powershell = False  # Flag for PowerShell TTS
         self.speech_queue = queue.Queue(maxsize=10)  # Prevent queue overflow
         self.is_speaking = False
         self.current_priority = 999  # Lower number = higher priority
         self.speech_thread = None
         
+        # Load user voice configuration
+        self.voice_config = self._load_voice_config()
+        
         # Voice settings for different styles
         self.voice_settings = {
-            FeedbackStyle.URGENT: {"rate": 160, "volume": 1.0},
-            FeedbackStyle.CORRECTIVE: {"rate": 140, "volume": 0.9},
-            FeedbackStyle.INSTRUCTIONAL: {"rate": 145, "volume": 0.85},
-            FeedbackStyle.ENCOURAGING: {"rate": 150, "volume": 0.8},
-            FeedbackStyle.MOTIVATIONAL: {"rate": 155, "volume": 0.9}
+            FeedbackStyle.URGENT: {"rate": self.voice_config['rate'], "volume": min(100, self.voice_config['volume'] + 5)},
+            FeedbackStyle.CORRECTIVE: {"rate": self.voice_config['rate'], "volume": self.voice_config['volume']},
+            FeedbackStyle.INSTRUCTIONAL: {"rate": self.voice_config['rate'], "volume": self.voice_config['volume']},
+            FeedbackStyle.ENCOURAGING: {"rate": max(-2, self.voice_config['rate'] - 1), "volume": self.voice_config['volume']},
+            FeedbackStyle.MOTIVATIONAL: {"rate": self.voice_config['rate'], "volume": min(100, self.voice_config['volume'] + 3)}
         }
         
         if self.enabled:
             self._initialize_engine()
     
+    def _load_voice_config(self) -> dict:
+        """Load voice configuration from file or use defaults"""
+        default_config = {
+            'voice_name': 'Microsoft Zira Desktop',
+            'rate': 0,
+            'volume': 90,
+            'style': 'coaching'
+        }
+        
+        try:
+            import os
+            config_file = os.path.join(os.path.dirname(__file__), '..', '..', 'voice_config.txt')
+            if os.path.exists(config_file):
+                config = {}
+                with open(config_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, value = line.split('=', 1)
+                            key = key.strip()
+                            value = value.strip()
+                            
+                            # Convert numeric values
+                            if key in ['rate', 'volume']:
+                                try:
+                                    config[key] = int(value)
+                                except ValueError:
+                                    config[key] = default_config[key]
+                            else:
+                                config[key] = value
+                
+                # Merge with defaults for any missing keys
+                for key, default_value in default_config.items():
+                    if key not in config:
+                        config[key] = default_value
+                
+                print(f"✅ Loaded voice config: {config['voice_name']} (Rate: {config['rate']}, Volume: {config['volume']})")
+                return config
+            else:
+                print("⚠️ No voice config found, using defaults")
+                return default_config
+                
+        except Exception as e:
+            print(f"⚠️ Error loading voice config: {e}, using defaults")
+            return default_config
+    
     def _initialize_engine(self):
         """Initialize the TTS engine with error handling"""
         try:
             import pyttsx3
+            
+            # First, try to use PowerShell TTS (our working solution)
+            if self._test_powershell_tts():
+                self.use_powershell = True
+                print("✅ Voice feedback engine initialized with PowerShell TTS")
+                self._start_speech_worker()
+                return
+            
+            # Fallback to pyttsx3 if PowerShell fails
             self.engine = pyttsx3.init()
             
             # Set default properties
@@ -59,7 +118,7 @@ class VoiceFeedbackEngine:
             # Start the speech worker thread
             self._start_speech_worker()
             
-            print("✅ Voice feedback engine initialized successfully")
+            print("✅ Voice feedback engine initialized with pyttsx3")
             
         except ImportError:
             print("⚠️ pyttsx3 not installed. Voice feedback disabled.")
@@ -68,6 +127,57 @@ class VoiceFeedbackEngine:
         except Exception as e:
             print(f"❌ Voice engine initialization failed: {e}")
             self.enabled = False
+    
+    def _test_powershell_tts(self) -> bool:
+        """Test if PowerShell TTS is available"""
+        try:
+            import subprocess
+            # Test PowerShell TTS with a quick silent test
+            cmd = [
+                'powershell', '-Command',
+                'Add-Type -AssemblyName System.Speech; ' +
+                '$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; ' +
+                '$synth.SetOutputToNull(); ' +
+                '$synth.Speak("test"); ' +
+                '$synth.Dispose()'
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=5)
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def _speak_with_powershell(self, message: str) -> bool:
+        """Speak message using PowerShell TTS with user-selected voice and settings"""
+        try:
+            import subprocess
+            voice_name = self.voice_config['voice_name']
+            rate = self.voice_config['rate']
+            volume = self.voice_config['volume']
+            
+            # Extract the key part of the voice name for matching
+            voice_key = voice_name.split()[1] if len(voice_name.split()) > 1 else voice_name
+            
+            cmd = [
+                'powershell', '-Command',
+                f'Add-Type -AssemblyName System.Speech; ' +
+                f'$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; ' +
+                f'$voices = $synth.GetInstalledVoices(); ' +
+                f'$targetVoice = $voices | Where-Object {{ $_.VoiceInfo.Name -like "*{voice_key}*" }}; ' +
+                f'if ($targetVoice) {{ ' +
+                f'    $synth.SelectVoice($targetVoice.VoiceInfo.Name); ' +
+                f'}} else {{ ' +
+                f'    Write-Host "Target voice not found, using default"; ' +
+                f'}}; ' +
+                f'$synth.Rate = {rate}; ' +
+                f'$synth.Volume = {volume}; ' +
+                f'$synth.Speak("{message}"); ' +
+                f'$synth.Dispose()'
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            return result.returncode == 0
+        except Exception as e:
+            print(f"❌ PowerShell TTS failed: {e}")
+            return False
     
     def _start_speech_worker(self):
         """Start background thread for non-blocking speech processing"""
@@ -97,7 +207,9 @@ class VoiceFeedbackEngine:
                     self._apply_voice_settings(style)
                     
                     # Speak the message
-                    if self.engine:
+                    if self.use_powershell:
+                        self._speak_with_powershell(message)
+                    elif self.engine:
                         self.engine.say(message)
                         self.engine.runAndWait()
                     
@@ -171,7 +283,9 @@ class VoiceFeedbackEngine:
         
         try:
             self._apply_voice_settings(style)
-            if self.engine:
+            if self.use_powershell:
+                self._speak_with_powershell(clean_message)
+            elif self.engine:
                 self.engine.say(clean_message)
                 self.engine.runAndWait()
             return True
@@ -254,13 +368,14 @@ class VoiceFeedbackEngine:
     
     def is_available(self) -> bool:
         """Check if voice feedback is available and working"""
-        return self.enabled and self.engine is not None
+        return self.enabled and (self.use_powershell or self.engine is not None)
     
     def get_status(self) -> Dict[str, Any]:
         """Get current voice engine status for debugging"""
         return {
             'enabled': self.enabled,
             'engine_available': self.engine is not None,
+            'powershell_tts': self.use_powershell,
             'is_speaking': self.is_speaking,
             'queue_size': self.speech_queue.qsize(),
             'current_priority': self.current_priority

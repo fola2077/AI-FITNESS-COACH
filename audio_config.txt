@@ -1,0 +1,5 @@
+# AI Fitness Coach Audio Configuration
+# Generated: Windows 11
+WORKING_DRIVER=PowerShell TTS
+SYSTEM=Windows
+STATUS=WORKING
