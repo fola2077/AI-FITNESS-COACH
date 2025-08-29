@@ -54,6 +54,11 @@ class ThresholdConfig:
     depth_movement_range_threshold: float = 50.0   # Minimum movement range (degrees)
     depth_excellent_range: float = 0.9             # Placeholder for future depth analysis
     
+    # NEW: Enhanced Partial Rep Detection Thresholds
+    depth_micro_movement_threshold: float = 20.0   # Minimum range to count as movement
+    depth_micro_movement_angle: float = 155.0      # Angle threshold for micro-movement detection
+    depth_standing_angle_threshold: float = 160.0  # What counts as "standing position"
+    
     # Butt Wink (Back Rounding) Analyzer Thresholds
     butt_wink_std_threshold: float = 8.0           # Standard deviation threshold for back angle variation
     butt_wink_range_threshold: float = 15.0        # Range threshold for back angle variation
@@ -135,6 +140,7 @@ class FaultType(Enum):
     PARTIAL_REP = "partial_rep"
     INSUFFICIENT_DEPTH = "insufficient_depth"
     BAD_SHALLOW_DEPTH = "bad_shallow_depth"  # Very shallow
+    MICRO_MOVEMENT = "micro_movement"        # NEW: Barely moving (fake squats)
     
     # Stability faults
     SEVERE_INSTABILITY = "severe_instability"
@@ -198,6 +204,9 @@ class BiomechanicalMetrics:
     
     # Enhanced tracking data for new analyzers
     raw_landmarks: List = field(default_factory=list)
+    
+    # User skill level for adaptive analysis
+    skill_level: str = 'INTERMEDIATE'  # BEGINNER, INTERMEDIATE, ADVANCED, EXPERT
     
     # Additional landmark positions (extracted from raw_landmarks)
     left_knee_pos: Optional[Any] = None
@@ -736,10 +745,17 @@ class DepthAnalyzer(BaseAnalyzer):
         return True  # Depth analysis is critical for all users regardless of skill level
     
     def analyze(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
+        """Enhanced depth analysis with three-tier detection and skill-based sensitivity.
+        
+        Three-Tier System:
+        1. Micro-movement (barely moving - fake squats)
+        2. Partial rep (some depth but not enough)  
+        3. Good depth (meets requirements, potential rewards)
+        """
         knee_angles = [fm.knee_angle_left for fm in frame_metrics if fm.knee_angle_left > 0]
         if not knee_angles:
             return {'faults': [], 'penalties': [], 'bonuses': []}
-        
+
         min_knee_angle = np.min(knee_angles)
         max_knee_angle = np.max(knee_angles)
         movement_range = max_knee_angle - min_knee_angle
@@ -748,8 +764,29 @@ class DepthAnalyzer(BaseAnalyzer):
         penalties = []
         bonuses = []
         
-        # REFINED: Only assign the most severe depth fault per rep
-        # Use elif to prevent multiple overlapping depth faults
+        # Get skill-based thresholds (default to intermediate if not available)
+        user_skill = frame_metrics[0].skill_level if frame_metrics else 'INTERMEDIATE'
+        micro_threshold = self._get_skill_adjusted_micro_threshold(user_skill)
+        depth_threshold = self._get_skill_adjusted_depth_threshold(user_skill)
+        
+        # TIER 1: Micro-movement detection (fake squats)
+        if movement_range < micro_threshold:
+            severity = self._calculate_micro_movement_severity(movement_range, micro_threshold)
+            faults.append(FaultType.MICRO_MOVEMENT.value)
+            penalties.append({
+                'reason': f"Barely moving - only {movement_range:.1f}° range of motion. "
+                         f"Need at least {micro_threshold:.1f}° for a real squat.",
+                'amount': min(45, severity),
+                'analysis_details': {
+                    'movement_range': movement_range,
+                    'required_range': micro_threshold,
+                    'skill_level': user_skill,
+                    'tier': 'micro_movement'
+                }
+            })
+            return {'faults': faults, 'penalties': penalties, 'bonuses': bonuses}  # Don't continue with other analysis
+        
+        # TIER 2: Traditional depth analysis with skill-based adjustments
         if min_knee_angle > self.config.depth_bad_shallow_threshold:  # Very shallow (barely squatting)
             faults.append(FaultType.BAD_SHALLOW_DEPTH.value)
             penalty = 35 + (min_knee_angle - self.config.depth_bad_shallow_threshold) * 1.5
@@ -764,31 +801,114 @@ class DepthAnalyzer(BaseAnalyzer):
                 'reason': 'Insufficient depth - not reaching parallel',
                 'amount': min(30, penalty)
             })
-        elif min_knee_angle > self.config.depth_partial_rep_threshold:  # Partial rep
+        elif min_knee_angle > depth_threshold:  # Skill-based partial rep
+            severity = self._calculate_partial_rep_severity(min_knee_angle, depth_threshold, user_skill)
+            
+            # Skill-based feedback
+            if user_skill == 'BEGINNER':
+                encouragement = "Getting there! Try to sit back a bit more."
+            elif user_skill == 'INTERMEDIATE':
+                encouragement = "Close! Aim for a slightly deeper squat."
+            elif user_skill == 'ADVANCED':
+                encouragement = "Not quite full depth - you can do better!"
+            else:  # EXPERT
+                encouragement = "Depth standards are high for your level."
+            
             faults.append(FaultType.PARTIAL_REP.value)
-            penalty = 10 + (min_knee_angle - self.config.depth_partial_rep_threshold) * 0.8
             penalties.append({
-                'reason': 'Partial range of motion',
-                'amount': min(20, penalty)
+                'reason': f"Partial rep - {encouragement} Current: {min_knee_angle:.1f}°, Target: <{depth_threshold:.1f}°",
+                'amount': min(20, severity),
+                'analysis_details': {
+                    'min_knee_angle': min_knee_angle,
+                    'required_angle': depth_threshold,
+                    'depth_deficit': min_knee_angle - depth_threshold,
+                    'skill_level': user_skill,
+                    'tier': 'partial_rep'
+                }
             })
+        
+        # TIER 3: Good depth (potential for positive feedback/rewards)
         else:
             # Good depth - potential bonus
             if min_knee_angle <= 85:  # Excellent depth
+                depth_quality = self._assess_depth_quality(min_knee_angle, depth_threshold, user_skill)
+                bonus_amount = 5 if depth_quality == 'excellent' else 3
                 bonuses.append({
-                    'reason': 'Excellent squat depth achieved',
-                    'amount': 5
+                    'reason': f'Excellent squat depth achieved ({depth_quality})',
+                    'amount': bonus_amount,
+                    'analysis_details': {
+                        'min_knee_angle': min_knee_angle,
+                        'depth_quality': depth_quality,
+                        'skill_level': user_skill,
+                        'tier': 'good_depth'
+                    }
                 })
-        
-        # Only check for movement range if no other depth fault was found
-        if not faults and movement_range < self.config.depth_movement_range_threshold:
-            faults.append(FaultType.PARTIAL_REP.value)
-            penalties.append({
-                'reason': f'Partial rep - limited range ({movement_range:.1f}°)',
-                'amount': 25
-            })
-        
+
         return {'faults': faults, 'penalties': penalties, 'bonuses': bonuses}
+
+    def _get_skill_adjusted_micro_threshold(self, user_skill: str) -> float:
+        """Get micro-movement threshold based on user skill level."""
+        base_threshold = self.config.depth_micro_movement_threshold
+        
+        skill_adjustments = {
+            'BEGINNER': 1.2,     # More lenient for beginners
+            'INTERMEDIATE': 1.0,  # Standard threshold
+            'ADVANCED': 0.8,     # Stricter for advanced users
+            'EXPERT': 0.6        # Very strict for experts
+        }
+        
+        multiplier = skill_adjustments.get(user_skill, 1.0)
+        return base_threshold * multiplier
     
+    def _get_skill_adjusted_depth_threshold(self, user_skill: str) -> float:
+        """Get depth threshold based on user skill level."""
+        base_threshold = self.config.depth_partial_rep_threshold
+        
+        # Skill-based adjustments for depth requirements
+        skill_adjustments = {
+            'BEGINNER': 95.0,      # More lenient - focus on learning form
+            'INTERMEDIATE': 90.0,   # Standard depth requirement
+            'ADVANCED': 85.0,      # Deeper squats expected
+            'EXPERT': 80.0         # Professional-level depth
+        }
+        
+        return skill_adjustments.get(user_skill, base_threshold)
+    
+    def _calculate_micro_movement_severity(self, movement_range: float, required_range: float) -> float:
+        """Calculate severity penalty for micro-movements."""
+        deficit = required_range - movement_range
+        severity_ratio = deficit / required_range
+        return 35 + (severity_ratio * 15)  # 35-50 point penalty range
+    
+    def _calculate_partial_rep_severity(self, angle: float, target_angle: float, user_skill: str) -> float:
+        """Calculate severity penalty for partial reps based on skill level."""
+        deficit = angle - target_angle
+        
+        # Skill-based penalty scaling
+        skill_multipliers = {
+            'BEGINNER': 0.5,     # Gentler penalties for beginners
+            'INTERMEDIATE': 1.0,  # Standard penalties
+            'ADVANCED': 1.3,     # Higher penalties for advanced users
+            'EXPERT': 1.5        # Highest penalties for experts
+        }
+        
+        multiplier = skill_multipliers.get(user_skill, 1.0)
+        base_penalty = 8 + (deficit * 0.8)
+        return base_penalty * multiplier
+    
+    def _assess_depth_quality(self, angle: float, target_angle: float, user_skill: str) -> str:
+        """Assess the quality of achieved depth."""
+        depth_margin = target_angle - angle
+        
+        if depth_margin >= 15:
+            return 'excellent'
+        elif depth_margin >= 8:
+            return 'good'  
+        elif depth_margin >= 3:
+            return 'adequate'
+        else:
+            return 'minimal'
+
     def debug_analysis(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict:
         """Debug version with detailed depth analysis"""
         knee_angles_left = [fm.knee_angle_left for fm in frame_metrics if fm.knee_angle_left > 0]
@@ -1415,6 +1535,11 @@ class IntelligentFormGrader:
 
         # Set initial difficulty
         self.set_difficulty(difficulty)
+        
+        # Initialize enhanced feedback system (new Phase 2 integration)
+        self.enhanced_feedback_enabled = True
+        self.enhanced_feedback_manager = None
+        self._initialize_enhanced_feedback(user_profile)
     
     def reset_session_state(self):
         """Reset state between repetitions to ensure fresh analysis"""
@@ -1474,6 +1599,77 @@ class IntelligentFormGrader:
         self.session_start_time = time.time()
         
         logger.info("FormGrader: NEW WORKOUT SESSION - Complete state reset, fresh start guaranteed")
+    
+    def _initialize_enhanced_feedback(self, user_profile):
+        """Initialize enhanced feedback system with graceful fallback"""
+        try:
+            from src.feedback.enhanced_feedback_manager import EnhancedFeedbackManager
+            
+            # Determine user skill level
+            skill_level = "beginner"  # default
+            if user_profile and hasattr(user_profile, 'skill_level'):
+                skill_level = str(user_profile.skill_level).lower()
+            
+            # Initialize enhanced feedback manager
+            self.enhanced_feedback_manager = EnhancedFeedbackManager(
+                voice_enabled=True,  # Can be overridden later
+                user_skill_level=skill_level
+            )
+            
+            self.logger.info(f"✅ Enhanced feedback system initialized (skill: {skill_level})")
+            
+        except ImportError as e:
+            self.logger.warning(f"⚠️ Enhanced feedback system unavailable: {e}")
+            self.enhanced_feedback_enabled = False
+        except Exception as e:
+            self.logger.error(f"❌ Enhanced feedback initialization failed: {e}")
+            self.enhanced_feedback_enabled = False
+    
+    def set_voice_feedback_enabled(self, enabled: bool):
+        """Enable or disable voice feedback"""
+        if self.enhanced_feedback_manager:
+            self.enhanced_feedback_manager.set_voice_enabled(enabled)
+            self.logger.info(f"Voice feedback {'enabled' if enabled else 'disabled'}")
+    
+    def get_enhanced_feedback_status(self) -> Dict[str, Any]:
+        """Get status of enhanced feedback system"""
+        if not self.enhanced_feedback_enabled or not self.enhanced_feedback_manager:
+            return {"enabled": False, "reason": "Not initialized"}
+        
+        return {
+            "enabled": True,
+            "status": self.enhanced_feedback_manager.get_feedback_statistics()
+        }
+    
+    def _process_enhanced_feedback(self, faults, analysis_details, score, frame_metrics, rep_number):
+        """Process enhanced feedback if system is initialized and enabled"""
+        if not self.enhanced_feedback_enabled or not self.enhanced_feedback_manager:
+            return None
+        
+        try:
+            # Create pose analysis result compatible with enhanced feedback
+            pose_analysis = {
+                'faults': faults,
+                'scores': {'overall': score, 'component_scores': analysis_details.get('component_scores', {})},
+                'rep_number': rep_number,
+                'frame_count': len(frame_metrics),
+                'analysis_details': analysis_details
+            }
+            
+            # Process with enhanced feedback manager
+            enhanced_result = self.enhanced_feedback_manager.process_pose_analysis(pose_analysis)
+            
+            return {
+                'messages_generated': len(enhanced_result.get('messages', [])),
+                'voice_messages_sent': enhanced_result.get('voice_messages_sent', 0),
+                'priority_levels': [msg.get('priority', 'MEDIUM') for msg in enhanced_result.get('messages', [])],
+                'feedback_categories': [msg.get('category', 'GENERAL') for msg in enhanced_result.get('messages', [])],
+                'status': 'success'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Enhanced feedback processing error: {e}")
+            return {'status': 'error', 'error': str(e)}
     
     def ensure_fresh_session(self):
         """
@@ -1869,7 +2065,12 @@ class IntelligentFormGrader:
         
         self.recent_scores.append(final_score)
         
-        return {
+        # PHASE 2: Enhanced feedback integration
+        enhanced_feedback_result = self._process_enhanced_feedback(
+            filtered_faults, analysis_details, final_score, frame_metrics, rep_number
+        )
+        
+        result = {
             'score': final_score,
             'base_score': base_score,  # FIXED: Include base score for validation
             'faults': filtered_faults,  # TASK 6: Use hierarchy-filtered faults
@@ -1880,6 +2081,12 @@ class IntelligentFormGrader:
             'scoring_method': 'balanced_multi_component_with_hierarchy',
             'phase_durations': {'total': len(frame_metrics) / 30.0}
         }
+        
+        # Add enhanced feedback to result if available
+        if enhanced_feedback_result:
+            result['enhanced_feedback'] = enhanced_feedback_result
+        
+        return result
     
     def _calculate_component_score(self, analyzer_result: Dict, base_score: float = 100) -> float:
         """Calculate score for a single component - bonuses always allowed here"""

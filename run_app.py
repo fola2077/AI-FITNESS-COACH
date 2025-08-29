@@ -3,6 +3,15 @@ import os
 import subprocess
 from pathlib import Path
 
+def is_interactive() -> bool:
+    """
+    Determine if the process is attached to an interactive TTY (safe to prompt).
+    """
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
+
 def check_dependencies():
     """
     Check if all required dependencies are installed and provide helpful guidance.
@@ -11,7 +20,8 @@ def check_dependencies():
         'PySide6': 'pip install PySide6',
         'cv2': 'pip install opencv-python',
         'mediapipe': 'pip install mediapipe',
-        'numpy': 'pip install numpy'
+        'numpy': 'pip install numpy',
+        'pyttsx3': 'pip install pyttsx3'
     }
     
     missing_packages = []
@@ -37,7 +47,10 @@ def check_dependencies():
         print("\nOr install all at once:")
         print("  pip install -r requirements.txt")
         
-        # Ask user if they want to auto-install
+        # Ask user if they want to auto-install (only when interactive)
+        if not is_interactive():
+            print("\nℹ️ Non-interactive environment detected; skipping auto-install prompt.")
+            return False
         try:
             response = input("\nWould you like to auto-install missing packages? (y/n): ").lower()
             if response in ['y', 'yes']:
@@ -81,7 +94,8 @@ def setup_environment():
         project_root / "src",
         project_root / "src" / "gui",
         project_root / "src" / "processing",
-        project_root / "src" / "feedback"
+        project_root / "src" / "feedback",
+        project_root / "src" / "grading",
     ]
     
     for dir_path in critical_dirs:
@@ -186,66 +200,72 @@ def run_application():
     """
     try:
         print_startup_info()
-        
+
         # Check environment setup
         if not setup_environment():
             print("❌ Environment setup failed. Please check your installation.")
-            input("Press Enter to exit...")
+            if is_interactive():
+                input("Press Enter to exit...")
             return 1
-        
+
         # Check dependencies
         if not check_dependencies():
             print("❌ Dependency check failed. Please install required packages.")
-            input("Press Enter to exit...")
+            if is_interactive():
+                input("Press Enter to exit...")
             return 1
-        
-        # NEW: Validate enhanced form grader
-        if not validate_enhanced_form_grader():
-            print("⚠️ Enhanced form grader validation failed, but continuing anyway...")
-        
+
+        # Optionally validate enhanced form grader (can slow startup)
+        should_validate = os.getenv("AIFC_VALIDATE_GRADER", "1") == "1"
+        if should_validate:
+            if not validate_enhanced_form_grader():
+                print("⚠️ Enhanced form grader validation failed, but continuing anyway...")
+        else:
+            print("ℹ️ Skipping grader self-test (set AIFC_VALIDATE_GRADER=1 to enable).")
+
         # Import Qt after dependency check
         from PySide6.QtWidgets import QApplication
-        from PySide6.QtCore import Qt
-        
         # Import MainWindow after the path has been adjusted
         from src.gui.main_window import MainWindow
-        
+
         print("✅ All checks passed! Launching GUI...")
-        
+
         # Create and configure Qt application
         app = QApplication(sys.argv)
         app.setApplicationName("AI Fitness Coach")
         app.setApplicationVersion("1.0.0")
         app.setOrganizationName("AI Fitness Coach")
-        
+
         # Set application icon if available
         icon_path = Path(__file__).parent / "resources" / "icon.png"
         if icon_path.exists():
             from PySide6.QtGui import QIcon
             app.setWindowIcon(QIcon(str(icon_path)))
-        
+
         # Create and show main window
         window = MainWindow()
         window.show()
-        
+
         print("🎉 Application launched successfully!")
         print("💡 Check the Help menu for usage instructions.")
-        
+
         # Run the application
         return app.exec()
-        
+
     except ImportError as e:
         print(f"❌ Import Error: {e}")
         print("This usually means a required package is not installed.")
         print("Please run the dependency check again or install packages manually.")
-        input("Press Enter to exit...")
+        if is_interactive():
+            input("Press Enter to exit...")
         return 1
-        
+
     except Exception as e:
         print(f"❌ Unexpected Error: {e}")
         print("Please check your installation and try again.")
         print("If the problem persists, please report this issue.")
-        input("Press Enter to exit...")
+        if is_interactive():
+            input("Press Enter to exit...")
         return 1
 
 if __name__ == '__main__':

@@ -526,6 +526,27 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.webcam_button)
         controls_layout.addWidget(self.video_button)
         controls_layout.addWidget(self.stop_button)
+        
+        # Voice feedback controls
+        self.voice_feedback_button = QPushButton("🔊 Voice: ON")
+        self.voice_feedback_button.setCheckable(True)
+        self.voice_feedback_button.setChecked(True)
+        self.voice_feedback_button.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2196F3, stop:1 #1976D2);
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #42A5F5, stop:1 #2196F3);
+            }
+            QPushButton:checked {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4CAF50, stop:1 #388E3C);
+            }
+        """)
+        controls_layout.addWidget(self.voice_feedback_button)
+        
         controls_layout.addStretch()
         controls_layout.addWidget(QLabel("Difficulty:"))
         controls_layout.addWidget(self.difficulty_combo)
@@ -549,11 +570,39 @@ class MainWindow(QMainWindow):
         
         # === AI COACHING FEEDBACK CARD - EXPANDED ===
         feedback_card = ModernCardWidget("💬 AI Coaching Feedback")
+        
+        # Enhanced feedback status bar
+        feedback_status_layout = QHBoxLayout()
+        self.voice_status_label = QLabel("🔊 Voice: Ready")
+        self.voice_status_label.setStyleSheet("""
+            QLabel {
+                color: #4CAF50; font-weight: bold; font-size: 12px;
+                padding: 4px 8px; background-color: rgba(76, 175, 80, 0.1);
+                border-radius: 4px; border: 1px solid rgba(76, 175, 80, 0.3);
+            }
+        """)
+        
+        self.feedback_stats_label = QLabel("Messages: 0 | Voice: 0")
+        self.feedback_stats_label.setStyleSheet("""
+            QLabel {
+                color: #2196F3; font-size: 11px; padding: 4px 8px;
+                background-color: rgba(33, 150, 243, 0.1);
+                border-radius: 4px; border: 1px solid rgba(33, 150, 243, 0.3);
+            }
+        """)
+        
+        feedback_status_layout.addWidget(self.voice_status_label)
+        feedback_status_layout.addStretch()
+        feedback_status_layout.addWidget(self.feedback_stats_label)
+        
+        feedback_card.content_layout.addLayout(feedback_status_layout)
+        
+        # Main feedback display
         self.feedback_display = QTextEdit()
         self.feedback_display.setReadOnly(True)
         self.feedback_display.setPlaceholderText("🏋️ Complete a rep to receive detailed coaching feedback...")
-        self.feedback_display.setMinimumHeight(220)
-        self.feedback_display.setMaximumHeight(300)
+        self.feedback_display.setMinimumHeight(200)
+        self.feedback_display.setMaximumHeight(280)
         
         self.feedback_display.setStyleSheet("""
             QTextEdit {
@@ -745,6 +794,9 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.update_frame)
         self.difficulty_combo.currentTextChanged.connect(self.on_difficulty_changed)
         self.rep_analysis_display_timer.timeout.connect(self.clear_rep_analysis_display)
+        
+        # Voice feedback connection
+        self.voice_feedback_button.clicked.connect(self.toggle_voice_feedback)
     
     # === CORE METHODS (keeping existing logic but updating display calls) ===
     
@@ -1123,11 +1175,67 @@ class MainWindow(QMainWindow):
 
             feedback_html += "</div>"
 
+            # Enhanced feedback display integration
+            self._update_enhanced_feedback_display(analysis)
+
             self.feedback_display.setHtml(feedback_html)
             self.rep_analysis_display_timer.start(10000)  # Show longer for better readability
             
         except Exception as e:
             print(f"❌ Error in display_comprehensive_analysis: {e}")
+    
+    def _update_enhanced_feedback_display(self, analysis: dict):
+        """Update enhanced feedback status display"""
+        try:
+            enhanced_feedback = analysis.get('enhanced_feedback', {})
+            
+            if enhanced_feedback:
+                # Update voice status
+                if enhanced_feedback.get('status') == 'success':
+                    self.voice_status_label.setText("🔊 Voice: Active")
+                    self.voice_status_label.setStyleSheet("""
+                        QLabel {
+                            color: #4CAF50; font-weight: bold; font-size: 12px;
+                            padding: 4px 8px; background-color: rgba(76, 175, 80, 0.1);
+                            border-radius: 4px; border: 1px solid rgba(76, 175, 80, 0.3);
+                        }
+                    """)
+                else:
+                    self.voice_status_label.setText("⚠️ Voice: Error")
+                    self.voice_status_label.setStyleSheet("""
+                        QLabel {
+                            color: #FF9800; font-weight: bold; font-size: 12px;
+                            padding: 4px 8px; background-color: rgba(255, 152, 0, 0.1);
+                            border-radius: 4px; border: 1px solid rgba(255, 152, 0, 0.3);
+                        }
+                    """)
+                
+                # Update feedback statistics
+                msg_count = enhanced_feedback.get('messages_generated', 0)
+                voice_count = enhanced_feedback.get('voice_messages_sent', 0)
+                self.feedback_stats_label.setText(f"Messages: {msg_count} | Voice: {voice_count}")
+                
+                # Show enhanced feedback details in status bar
+                categories = enhanced_feedback.get('feedback_categories', [])
+                if categories:
+                    unique_categories = list(set(categories))
+                    self.status_bar.showMessage(f"🎯 Enhanced feedback: {', '.join(unique_categories[:3])}", 5000)
+            else:
+                # No enhanced feedback available
+                if self.voice_feedback_button.isChecked():
+                    self.voice_status_label.setText("🔊 Voice: Ready")
+                else:
+                    self.voice_status_label.setText("🔇 Voice: OFF")
+                    self.voice_status_label.setStyleSheet("""
+                        QLabel {
+                            color: #757575; font-weight: bold; font-size: 12px;
+                            padding: 4px 8px; background-color: rgba(117, 117, 117, 0.1);
+                            border-radius: 4px; border: 1px solid rgba(117, 117, 117, 0.3);
+                        }
+                    """)
+                    
+        except Exception as e:
+            print(f"Error updating enhanced feedback display: {e}")
     
     def update_rep_display(self, rep_count):
         """Manually update rep display with better visual feedback"""
@@ -1357,6 +1465,31 @@ class MainWindow(QMainWindow):
             # Fallback - just change the form grader difficulty if pose processor update fails
             if hasattr(self.pose_processor, 'form_grader'):
                 self.pose_processor.form_grader.set_difficulty(difficulty)
+    
+    def toggle_voice_feedback(self):
+        """Toggle voice feedback on/off"""
+        try:
+            is_enabled = self.voice_feedback_button.isChecked()
+            
+            # Update button text and style
+            if is_enabled:
+                self.voice_feedback_button.setText("🔊 Voice: ON")
+                self.status_bar.showMessage("🔊 Voice feedback enabled", 3000)
+            else:
+                self.voice_feedback_button.setText("🔇 Voice: OFF")
+                self.status_bar.showMessage("🔇 Voice feedback disabled", 3000)
+            
+            # Update the form grader voice setting if available
+            if (hasattr(self.pose_processor, 'form_grader') and 
+                hasattr(self.pose_processor.form_grader, 'set_voice_feedback_enabled')):
+                self.pose_processor.form_grader.set_voice_feedback_enabled(is_enabled)
+                print(f"Voice feedback {'enabled' if is_enabled else 'disabled'}")
+            else:
+                print("Enhanced feedback system not available")
+                
+        except Exception as e:
+            print(f"Error toggling voice feedback: {e}")
+            self.status_bar.showMessage(f"❌ Error: {e}", 5000)
     
     def show_enhanced_session_report(self):
         """Show comprehensive session report with duration and feedback"""
