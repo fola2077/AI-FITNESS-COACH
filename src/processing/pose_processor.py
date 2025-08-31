@@ -16,6 +16,7 @@ from src.grading.advanced_form_grader import (
 from src.gui.widgets.session_report import SessionManager
 from src.utils.rep_counter import RepCounter, MovementPhase
 from src.validation.pose_validation import PoseValidationSystem
+from src.data.session_logger import DataLogger
 from enum import Enum
 
 class SessionState(Enum):
@@ -31,6 +32,9 @@ class PoseProcessor:
         self.feedback_manager = FeedbackManager()
         self.session_manager = SessionManager()
         self.rep_counter = RepCounter(exercise_type="squat")
+        
+        # Add data logger for CSV logging
+        self.data_logger = DataLogger()
 
         self.user_profile = user_profile or UserProfile(user_id="default_user", skill_level=UserLevel.INTERMEDIATE)
         
@@ -71,11 +75,18 @@ class PoseProcessor:
         self.start_time = time.time()
         self.stability_buffer = deque(maxlen=30)
         self.calibration_frames = 0
+        self._last_phase = None  # For rep transition detection
 
     def start_session(self, source_type='webcam'):
         """Starts a new analysis session."""
         print("🚀 Starting new session...")
         self.reset()
+        
+        # Start data logging session
+        user_id = self.user_profile.user_id if self.user_profile else "default_user"
+        session_id = self.data_logger.start_session(user_id)
+        print(f"📊 Data logging session started: {session_id}")
+        
         self.session_manager.start_session()
         if source_type == 'webcam':
             self.session_state = SessionState.CALIBRATING
@@ -88,6 +99,11 @@ class PoseProcessor:
         """Ends the current session."""
         print("🛑 Ending session.")
         self.session_state = SessionState.STOPPED
+        
+        # End data logging session
+        self.data_logger.end_session()
+        print("📊 Data logging session ended")
+        
         self.session_manager.end_session()
         # Return session summary instead of calling non-existent method
         return self.session_manager.get_session_summary()
@@ -175,12 +191,40 @@ class PoseProcessor:
         angles = self.pose_detector.calculate_angles(landmarks)
         rep_state = self.rep_counter.update(angles)
 
+        # Check for rep start (when we transition from STANDING to any movement phase)
+        current_phase = rep_state.phase
+        last_phase = getattr(self, '_last_phase', None)
+        
+        if (current_phase != MovementPhase.STANDING and 
+            (last_phase is None or last_phase == MovementPhase.STANDING)):
+            # Starting a new rep - log rep start
+            expected_rep_number = self.rep_counter.rep_count + 1
+            try:
+                self.data_logger.log_rep_start(expected_rep_number)
+                print(f"✅ Rep {expected_rep_number} started")
+            except Exception as e:
+                print(f"❌ Error starting rep logging: {e}")
+        
+        # Store last phase for transition detection
+        self._last_phase = current_phase
+        
         # Collect metrics for the current rep - SKIP invalid metrics
         if rep_state.phase != MovementPhase.STANDING or self.current_rep_metrics:
             current_metric = self._convert_landmarks_to_metrics(landmarks, self.previous_metrics)
             if current_metric is not None:  # Only add valid metrics
                 self.current_rep_metrics.append(current_metric)
                 self.previous_metrics = current_metric
+                
+                # Log frame data to CSV (now with rep context)
+                try:
+                    phase_str = rep_state.phase.value if hasattr(rep_state.phase, 'value') else str(rep_state.phase)
+                    self.data_logger.log_frame_data(
+                        current_metric, 
+                        frame_number=len(self.current_rep_metrics),
+                        movement_phase=phase_str
+                    )
+                except Exception as e:
+                    print(f"❌ Error logging frame data: {e}")
 
         # When a rep is completed, trigger the full analysis
         if rep_state.rep_completed:
@@ -247,6 +291,17 @@ class PoseProcessor:
             
             # Add timestamp for UI tracking
             self.last_rep_analysis['timestamp'] = time.time()
+            
+            # Log rep completion to CSV
+            rep_data = {
+                'rep_number': self.rep_counter.rep_count,
+                'start_time': time.time() - 5.0,  # Approximate based on frame count
+                'end_time': time.time(),
+                'max_depth': self.last_rep_analysis.get('component_scores', {}).get('depth', {}).get('max_depth', 0),
+                'form_score': self.last_rep_analysis.get('score', 0),
+                'faults': self.last_rep_analysis.get('faults', [])
+            }
+            self.data_logger.log_rep_completion(rep_data)
             
             # Update session manager with the analysis
             if hasattr(self, 'session_manager'):

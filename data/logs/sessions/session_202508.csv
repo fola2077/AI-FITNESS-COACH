@@ -1,1 +1,4 @@
 session_id,user_id,timestamp,session_start,session_end,total_duration_seconds,total_reps,completed_reps,failed_reps,average_form_score,best_form_score,worst_form_score,total_faults,safety_faults,form_faults,depth_faults,user_skill_level,exercise_type,voice_feedback_enabled,session_quality_score,improvement_score,fatigue_detected,session_notes,system_version
+session_20250830_225851_main_user,main_user,1756591131.7414558,2025-08-30T22:58:51.741455,2025-08-30T22:59:03.119707,11.378252029418944,0,0,0,0.0,0,0,0,,,,INTERMEDIATE,squat,True,0.0,0.0,False,,2.0
+session_20250830_231729_main_user,main_user,1756592249.703097,2025-08-30T23:17:29.703097,2025-08-30T23:17:41.251937,11.548840284347534,1,1,0,0.0,0,0,1,,,,INTERMEDIATE,squat,True,100.0,0.0,False,,2.0
+session_20250831_003323_main_user,main_user,1756596803.8590946,2025-08-31T00:33:23.859094,2025-08-31T00:33:41.369447,17.510352611541748,1,1,0,0.0,0,0,1,,,,INTERMEDIATE,squat,True,100.0,0.0,False,,2.0

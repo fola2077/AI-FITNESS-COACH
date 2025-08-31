@@ -1,0 +1,22 @@
+AI Fitness Coach - Session Report
+===================================================
+
+Session ID: session_20250830_225851_main_user
+User: main_user
+Date: 2025-08-30T22:58:51.741455
+Duration: 11.4 seconds
+
+Performance Summary:
+- Total Reps: 0
+- Average Score: 0.0/100
+- Best Score: 0.0/100
+- Session Quality: 0.0/100
+- Improvement: 0.0
+- Fatigue Detected: No
+
+Data Logged:
+- Session Records: 1
+- Rep Records: 0
+- Frame Records: 0
+- ML Training Records: 0
+

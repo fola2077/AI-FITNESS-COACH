@@ -1,0 +1,9 @@
+session_id,user_id,timestamp,session_start,session_end,total_duration_seconds,total_reps,completed_reps,failed_reps,average_form_score,best_form_score,worst_form_score,total_faults,safety_faults,form_faults,depth_faults,user_skill_level,exercise_type,voice_feedback_enabled,session_quality_score,improvement_score,fatigue_detected,session_notes,system_version
+session_20250830_225240_diagnostic_test_user,diagnostic_test_user,1756590760.7474263,2025-08-30T22:52:40.747426,2025-08-30T22:52:40.747426,0.0,0,0,0,0,0,0,0,,,,INTERMEDIATE,squat,True,0.0,0.0,False,,2.0
+session_20250830_225709_diagnostic_test_user,diagnostic_test_user,1756591029.1008112,2025-08-30T22:57:09.100811,2025-08-30T22:57:09.100811,0.0,0,0,0,0,0,0,0,,,,INTERMEDIATE,squat,True,0.0,0.0,False,,2.0
+session_20250830_225709_video_test_user,video_test_user,1756591029.4445407,2025-08-30T22:57:09.444540,2025-08-30T22:57:10.399689,0.9551491737365723,0,0,0,0,0,0,0,,,,INTERMEDIATE,squat,True,0.0,0.0,False,,2.0
+session_20250830_225851_main_user,main_user,1756591131.7414558,2025-08-30T22:58:51.741455,2025-08-30T22:59:03.119707,11.378252029418945,0,0,0,0,0,0,0,,,,INTERMEDIATE,squat,True,0.0,0.0,False,,2.0
+session_20250830_225921_test_user,test_user,1756591161.5806694,2025-08-30T22:59:21.580669,2025-08-30T22:59:23.327550,1.7468812465667725,0,0,0,0,0,0,0,,,,INTERMEDIATE,squat,True,0.0,0.0,False,,2.0
+session_20250830_230115_test_user,test_user,1756591275.830511,2025-08-30T23:01:15.830511,2025-08-30T23:01:17.562455,1.7319445610046387,0,0,0,0,0,0,0,,,,INTERMEDIATE,squat,True,0.0,0.0,False,,2.0
+session_20250830_230201_test_user,test_user,1756591321.803205,2025-08-30T23:02:01.803205,2025-08-30T23:02:03.524972,1.7217679023742676,0,0,0,0,0,0,0,,,,INTERMEDIATE,squat,True,0.0,0.0,False,,2.0
+session_20250830_230307_test_user,test_user,1756591387.173284,2025-08-30T23:03:07.173284,2025-08-30T23:03:08.988749,1.8154656887054443,1,1,0,0.0,0,0,1,,,,INTERMEDIATE,squat,True,100.0,0.0,False,,2.0

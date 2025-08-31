@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayo
                              QTextEdit, QSplitter, QGridLayout,
                              QGroupBox, QMenuBar, QMessageBox, QComboBox,
                              QProgressBar, QFrame, QScrollArea, QSpacerItem,
-                             QSizePolicy)
+                             QSizePolicy, QStackedWidget)
 from PySide6.QtGui import (QImage, QPixmap, QAction, QFont, QPainter, QPen, 
                           QBrush, QColor, QConicalGradient, QLinearGradient)
 from PySide6.QtCore import Qt, QTimer, QRect
@@ -23,6 +23,12 @@ from src.gui.widgets.settings_dialog import SettingsDialog
 from src.gui.widgets.session_report import SessionReportDialog
 from src.config.config_manager import ConfigManager
 from src.gui.widgets.session_report import SessionManager
+
+# Import our new UI components
+from src.gui.widgets.welcome_screen import WelcomeScreen
+from src.gui.widgets.user_profile_dialog import UserProfileDialog
+from src.gui.widgets.main_menu_screen import MainMenuScreen
+from src.gui.widgets.squat_guide_screen import SquatGuideScreen
 
 
 class ModernProgressBar(QWidget):
@@ -348,10 +354,13 @@ class MetricDisplayWidget(QWidget):
         self.value_label.setText(str(value))
 
 class MainWindow(QMainWindow):
-    """Modern AI Fitness Coach Main Window"""
+    """Modern AI Fitness Coach Main Window with Welcome Screen System"""
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AI Fitness Coach - Advanced Form Analysis")
+        
+        # User profile data
+        self.user_profile_data = None
         
         # Core components
         self.config_manager = ConfigManager()
@@ -398,7 +407,7 @@ class MainWindow(QMainWindow):
         self.setup_connections()
     
     def setup_ui(self):
-        """Setup the modern UI with card-based layout"""
+        """Setup the modern UI with screen management system"""
         # Modern dark theme
         self.setStyleSheet("""
             QMainWindow {
@@ -432,10 +441,63 @@ class MainWindow(QMainWindow):
             }
         """)
         
+        # Create the stacked widget for screen management
+        self.stacked_widget = QStackedWidget()
+        self.setCentralWidget(self.stacked_widget)
+        
+        # Create screens
+        self.welcome_screen = WelcomeScreen()
+        self.main_menu_screen = MainMenuScreen()
+        self.squat_guide_screen = SquatGuideScreen()
+        self.analysis_widget = self._create_analysis_widget()  # The original main interface
+        
+        # Add screens to stack
+        self.stacked_widget.addWidget(self.welcome_screen)      # Index 0
+        self.stacked_widget.addWidget(self.main_menu_screen)    # Index 1
+        self.stacked_widget.addWidget(self.squat_guide_screen)  # Index 2
+        self.stacked_widget.addWidget(self.analysis_widget)     # Index 3
+        
+        # Start with welcome screen
+        self.stacked_widget.setCurrentIndex(0)
+        
+        # Status bar
+        self.status_bar = self.statusBar()
+        self.status_bar.setStyleSheet("""
+            QStatusBar {
+                background-color: #1e1e1e; color: #4CAF50;
+                border-top: 1px solid #555; padding: 5px;
+                font-size: 13px; font-weight: bold;
+            }
+        """)
+        self.status_bar.showMessage("🏋️ Welcome to AI Fitness Coach - Click Start to begin!")
+    
+    def _create_analysis_widget(self):
+        """Create the original analysis interface as a widget"""
         # Main layout
         central_widget = QWidget()
-        self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
+        main_layout.setSpacing(10)  # Reduced spacing
+        main_layout.setContentsMargins(10, 10, 10, 10)  # Reduced margins
+        
+        # Create splitter
+        splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(splitter)
+        
+        # Left panel (video)
+        left_panel = self._create_video_panel()
+        
+        # Right panel (analytics) - completely redesigned
+        right_panel = self._create_modern_analytics_panel()
+        
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        splitter.setSizes([1200, 400])  # Give even more space to video (was 1000, 500)
+        
+        # Allow splitter to be resizable
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(3)
+        
+        return central_widget
         main_layout.setSpacing(10)  # Reduced spacing
         main_layout.setContentsMargins(10, 10, 10, 10)  # Reduced margins
         
@@ -765,8 +827,15 @@ class MainWindow(QMainWindow):
         return panel
     
     def setup_menu_bar(self):
-        """Setup menu bar (keeping existing logic)"""
+        """Setup menu bar with navigation options"""
         menubar = self.menuBar()
+        
+        # Navigation menu
+        nav_menu = menubar.addMenu('🏠 Navigation')
+        back_to_menu_action = QAction('🏠 Back to Main Menu', self, triggered=self.show_main_menu)
+        show_guide_action = QAction('📖 Squat Guide', self, triggered=self.show_squat_guide)
+        nav_menu.addActions([back_to_menu_action, show_guide_action])
+        nav_menu.addSeparator()
         
         file_menu = menubar.addMenu('📁 File')
         open_video_action = QAction('📹 Open Video...', self, triggered=self.open_video_file)
@@ -787,7 +856,8 @@ class MainWindow(QMainWindow):
         debug_menu.addAction(self.validation_action)
     
     def setup_connections(self):
-        """Setup signal connections (keeping existing logic)"""
+        """Setup signal connections for all screens"""
+        # Analysis screen connections (original)
         self.webcam_button.clicked.connect(self.start_webcam)
         self.video_button.clicked.connect(self.open_video_file)
         self.stop_button.clicked.connect(self.stop_session)
@@ -797,6 +867,51 @@ class MainWindow(QMainWindow):
         
         # Voice feedback connection
         self.voice_feedback_button.clicked.connect(self.toggle_voice_feedback)
+        
+        # Welcome screen connections
+        self.welcome_screen.start_pressed.connect(self.show_user_profile_dialog)
+        
+        # Main menu connections
+        self.main_menu_screen.start_analysis.connect(self.show_analysis_screen)
+        self.main_menu_screen.show_guide.connect(self.show_squat_guide)
+        self.main_menu_screen.exit_app.connect(self.close)
+        
+        # Guide screen connections
+        self.squat_guide_screen.back_to_menu.connect(self.show_main_menu)
+    
+    def show_user_profile_dialog(self):
+        """Show user profile collection dialog"""
+        dialog = UserProfileDialog(self)
+        if dialog.exec() == 1:  # QDialog.Accepted = 1
+            self.user_profile_data = dialog.get_user_data()
+            
+            # Update user profile and interface
+            if self.user_profile_data:
+                self.main_menu_screen.set_user_profile(self.user_profile_data)
+                
+                # Update the actual user profile object
+                self.user_profile.user_id = self.user_profile_data['name'].lower().replace(' ', '_')
+                
+                # Update status
+                self.status_bar.showMessage(f"Welcome {self.user_profile_data['name']}! Ready to start training.", 5000)
+            
+            # Move to main menu
+            self.show_main_menu()
+    
+    def show_main_menu(self):
+        """Show the main menu screen"""
+        self.stacked_widget.setCurrentIndex(1)
+        self.status_bar.showMessage("🏠 Main Menu - Choose your next action")
+    
+    def show_squat_guide(self):
+        """Show the squat guide screen"""
+        self.stacked_widget.setCurrentIndex(2)
+        self.status_bar.showMessage("📖 Squat Guide - Learn proper technique")
+    
+    def show_analysis_screen(self):
+        """Show the analysis screen"""
+        self.stacked_widget.setCurrentIndex(3)
+        self.status_bar.showMessage("🎯 Analysis Mode - Select webcam or video to begin")
     
     # === CORE METHODS (keeping existing logic but updating display calls) ===
     
