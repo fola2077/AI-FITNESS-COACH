@@ -292,16 +292,53 @@ class PoseProcessor:
             # Add timestamp for UI tracking
             self.last_rep_analysis['timestamp'] = time.time()
             
-            # Log rep completion to CSV
-            rep_data = {
+            # Log rep completion to CSV - map form grader output to session logger format
+            component_scores = self.last_rep_analysis.get('component_scores', {})
+            
+            # Extract individual component scores
+            safety_score = component_scores.get('safety', {}).get('score', 0)
+            depth_score = component_scores.get('depth', {}).get('score', 0)
+            stability_score = component_scores.get('stability', {}).get('score', 0)
+            tempo_score = component_scores.get('tempo', {}).get('score', 0)
+            symmetry_score = component_scores.get('symmetry', {}).get('score', 0)
+            
+            # Calculate technique score as average of form-related analyzers
+            technique_components = ['butt_wink', 'knee_valgus', 'head_position', 'foot_stability']
+            technique_scores = [component_scores.get(comp, {}).get('score', 0) for comp in technique_components if comp in component_scores]
+            technique_score = sum(technique_scores) / len(technique_scores) if technique_scores else 0
+            
+            # Extract enhanced feedback information
+            enhanced_feedback = self.last_rep_analysis.get('enhanced_feedback', {})
+            
+            # Create properly formatted form analysis for session logger
+            form_analysis = {
+                'overall_score': self.last_rep_analysis.get('score', 0),
+                'safety_score': safety_score,
+                'depth_score': depth_score,
+                'stability_score': stability_score,
+                'tempo_score': tempo_score,
+                'symmetry_score': symmetry_score,
+                'technique_score': technique_score,
+                'faults': self.last_rep_analysis.get('faults', []),
+                'feedback': self.last_rep_analysis.get('feedback', []),
+                'enhanced_feedback': enhanced_feedback
+            }
+            
+            # Create feedback data with enhanced feedback details
+            feedback_data = {
                 'rep_number': self.rep_counter.rep_count,
                 'start_time': time.time() - 5.0,  # Approximate based on frame count
                 'end_time': time.time(),
-                'max_depth': self.last_rep_analysis.get('component_scores', {}).get('depth', {}).get('max_depth', 0),
-                'form_score': self.last_rep_analysis.get('score', 0),
-                'faults': self.last_rep_analysis.get('faults', [])
+                'max_depth': component_scores.get('depth', {}).get('result', {}).get('max_depth', 0),
+                'component_scores': component_scores,
+                'analysis_details': self.last_rep_analysis.get('analysis_details', {}),
+                'enhanced_feedback_status': enhanced_feedback.get('status', 'not_available'),
+                'voice_messages_sent': enhanced_feedback.get('voice_messages_sent', 0),
+                'feedback_categories': enhanced_feedback.get('feedback_categories', []),
+                'messages_generated': enhanced_feedback.get('messages_generated', 0)
             }
-            self.data_logger.log_rep_completion(rep_data)
+            
+            self.data_logger.log_rep_completion(form_analysis, feedback_data)
             
             # Update session manager with the analysis
             if hasattr(self, 'session_manager'):

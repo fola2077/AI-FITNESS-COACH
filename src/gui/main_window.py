@@ -353,6 +353,109 @@ class MetricDisplayWidget(QWidget):
         """Update the displayed value"""
         self.value_label.setText(str(value))
 
+class CompactPerformanceChart(QWidget):
+    """Compact real-time performance chart for session dashboard"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.data_points = []
+        self.max_points = 15  # Show last 15 reps
+        self.setMinimumHeight(80)
+        self.current_rep = 0
+        self.current_score = 0
+        
+        self.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2a2a2a, stop:1 #1e1e1e);
+                border: 1px solid #444;
+                border-radius: 8px;
+                margin: 2px;
+            }
+        """)
+    
+    def add_rep_score(self, rep_count, score):
+        """Add a new rep with its form score"""
+        self.current_rep = rep_count
+        self.current_score = score
+        self.data_points.append(float(score))
+        
+        if len(self.data_points) > self.max_points:
+            self.data_points.pop(0)
+        self.update()
+    
+    def reset_chart(self):
+        """Reset the chart data"""
+        self.data_points = []
+        self.current_rep = 0
+        self.current_score = 0
+        self.update()
+    
+    def paintEvent(self, event):
+        """Draw the compact performance chart"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Fill background
+        painter.fillRect(self.rect(), QColor("#1e1e1e"))
+        
+        # Draw current stats text (top area)
+        painter.setPen(QColor("#ffffff"))
+        painter.setFont(QFont("Arial", 9, QFont.Bold))
+        
+        stats_text = f"Rep: {self.current_rep} | Score: {self.current_score:.1f}%"
+        painter.drawText(10, 15, stats_text)
+        
+        # Draw chart if we have data
+        if len(self.data_points) < 2:
+            painter.setPen(QColor("#666666"))
+            painter.setFont(QFont("Arial", 8))
+            painter.drawText(10, 50, "Start exercising to see performance...")
+            return
+        
+        # Calculate chart area (lower 60% of widget)
+        margin = 8
+        chart_width = self.width() - 2 * margin
+        chart_height = self.height() - 35  # Leave space for stats text
+        chart_top = 25
+        
+        # Find min/max for scaling
+        min_val = min(self.data_points)
+        max_val = max(self.data_points)
+        if max_val == min_val:
+            max_val = min_val + 10  # Avoid division by zero
+        
+        # Draw subtle grid
+        painter.setPen(QPen(QColor("#333333"), 1))
+        for i in range(3):  # 3 horizontal lines
+            y = chart_top + (i * chart_height // 2)
+            painter.drawLine(margin, y, self.width() - margin, y)
+        
+        # Draw performance line
+        painter.setPen(QPen(QColor("#4CAF50"), 2))
+        
+        for i in range(len(self.data_points) - 1):
+            # Calculate x positions
+            x1 = margin + (i * chart_width // max(self.max_points - 1, 1))
+            x2 = margin + ((i + 1) * chart_width // max(self.max_points - 1, 1))
+            
+            # Calculate y positions (invert for screen coordinates)
+            y1 = chart_top + chart_height - int(((self.data_points[i] - min_val) / (max_val - min_val)) * chart_height)
+            y2 = chart_top + chart_height - int(((self.data_points[i + 1] - min_val) / (max_val - min_val)) * chart_height)
+            
+            painter.drawLine(x1, y1, x2, y2)
+            
+            # Draw dots at data points
+            painter.setPen(QPen(QColor("#81C784"), 1))
+            painter.setBrush(QBrush(QColor("#4CAF50")))
+            painter.drawEllipse(x1 - 2, y1 - 2, 4, 4)
+        
+        # Draw the last point
+        if self.data_points:
+            last_i = len(self.data_points) - 1
+            x_last = margin + (last_i * chart_width // max(self.max_points - 1, 1))
+            y_last = chart_top + chart_height - int(((self.data_points[-1] - min_val) / (max_val - min_val)) * chart_height)
+            painter.drawEllipse(x_last - 2, y_last - 2, 4, 4)
+
 class MainWindow(QMainWindow):
     """Modern AI Fitness Coach Main Window with Welcome Screen System"""
     def __init__(self):
@@ -400,6 +503,12 @@ class MainWindow(QMainWindow):
         # Session duration timer
         self.session_timer = QTimer(self)
         self.session_timer.timeout.connect(self.update_session_duration)
+        
+        # Countdown timer for 3-second start delay
+        self.countdown_timer = QTimer(self)
+        self.countdown_timer.timeout.connect(self.update_countdown)
+        self.countdown_active = False
+        self.countdown_seconds = 3
         
         # Setup UI
         self.setup_ui()
@@ -483,15 +592,15 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(splitter)
         
-        # Left panel (video)
-        left_panel = self._create_video_panel()
+        # Left panel (compact dashboard + video)
+        left_panel = self._create_video_panel_with_dashboard()
         
         # Right panel (analytics) - completely redesigned
         right_panel = self._create_modern_analytics_panel()
         
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
-        splitter.setSizes([1200, 400])  # Give even more space to video (was 1000, 500)
+        splitter.setSizes([1000, 600])  # Adjusted for dashboard + video
         
         # Allow splitter to be resizable
         splitter.setChildrenCollapsible(False)
@@ -619,6 +728,141 @@ class MainWindow(QMainWindow):
         layout.addWidget(controls_card, 0)  # No stretch for controls
         
         return panel
+    
+    def _create_video_panel_with_dashboard(self):
+        """Create the video panel with compact session dashboard on the left"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        
+        # === COMPACT SESSION DASHBOARD ===
+        self.session_dashboard = self._create_compact_session_dashboard()
+        layout.addWidget(self.session_dashboard, 0)  # No stretch - fixed height
+        
+        # === VIDEO SECTION ===
+        video_card = ModernCardWidget("🎥 Live Video Feed")
+        video_card.content_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.video_label = QLabel("Press 'Start Webcam' or 'Load Video'")
+        self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setMinimumSize(400, 300)
+        self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.video_label.setScaledContents(False)
+        
+        self.video_label.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #555; 
+                background-color: #222;
+                border-radius: 10px;
+                margin: 2px;
+            }
+        """)
+        
+        video_card.content_layout.addWidget(self.video_label)
+        layout.addWidget(video_card, 3)  # Give video most of the space
+        
+        # === CONTROLS ===
+        controls_card = ModernCardWidget("🎮 Controls")
+        controls_layout = QHBoxLayout()
+        
+        self.webcam_button = QPushButton("🎥 Start Webcam")
+        self.video_button = QPushButton("📁 Load Video")
+        self.stop_button = QPushButton("⏹️ Stop Session")
+        self.stop_button.setEnabled(False)
+        self.stop_button.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #F44336, stop:1 #D32F2F);
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #EF5350, stop:1 #F44336);
+            }
+        """)
+        
+        self.difficulty_combo = QComboBox()
+        self.difficulty_combo.addItems(["Beginner", "Casual", "Professional", "Expert"])
+        self.difficulty_combo.setCurrentText("Casual")
+        
+        controls_layout.addWidget(self.webcam_button)
+        controls_layout.addWidget(self.video_button)
+        controls_layout.addWidget(self.stop_button)
+        
+        # Voice feedback controls
+        self.voice_feedback_button = QPushButton("🔊 Voice: ON")
+        self.voice_feedback_button.setCheckable(True)
+        self.voice_feedback_button.setChecked(True)
+        self.voice_feedback_button.clicked.connect(self.toggle_voice_feedback)
+        controls_layout.addWidget(self.voice_feedback_button)
+        
+        controls_layout.addWidget(QLabel("Difficulty:"))
+        controls_layout.addWidget(self.difficulty_combo)
+        
+        controls_card.content_layout.addLayout(controls_layout)
+        controls_card.setMaximumHeight(120)
+        layout.addWidget(controls_card, 0)
+        
+        return panel
+    
+    def _create_compact_session_dashboard(self):
+        """Create a compact session dashboard with just a performance chart"""
+        dashboard_card = ModernCardWidget("📊 Performance Chart")
+        dashboard_card.setMaximumHeight(120)  # Keep it compact
+        dashboard_card.setMinimumHeight(120)
+        
+        # Create main layout
+        main_layout = QHBoxLayout()
+        main_layout.setSpacing(10)
+        
+        # Create simple performance chart
+        self.compact_chart = CompactPerformanceChart()
+        main_layout.addWidget(self.compact_chart, 1)  # Take most space
+        
+        # Reset button for session (smaller, on the right)
+        reset_button = QPushButton("🔄")
+        reset_button.setMaximumWidth(40)
+        reset_button.setMaximumHeight(40)
+        reset_button.setToolTip("Reset Session")
+        reset_button.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #607D8B, stop:1 #455A64);
+                color: white;
+                border: none;
+                border-radius: 20px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #78909C, stop:1 #607D8B);
+            }
+        """)
+        reset_button.clicked.connect(self._reset_session)
+        
+        main_layout.addWidget(reset_button, 0)  # No stretch - fixed size
+        
+        dashboard_card.content_layout.addLayout(main_layout)
+        
+        # Initialize session tracking
+        self.session_start_time = None
+        self.session_reps = 0
+        self.session_scores = []
+        
+        return dashboard_card
+    
+    def _reset_session(self):
+        """Reset the session statistics"""
+        self.session_start_time = None
+        self.session_reps = 0
+        self.session_scores = []
+        
+        # Reset compact chart
+        if hasattr(self, 'compact_chart'):
+            self.compact_chart.reset_chart()
+        
+        print("🔄 Session stats reset")
     
     def _create_modern_analytics_panel(self):
         """Create OPTIMIZED analytics panel with feedback prioritized"""
@@ -948,7 +1192,13 @@ class MainWindow(QMainWindow):
             self.webcam_button.setEnabled(False)
             self.video_button.setEnabled(False)
             self.stop_button.setEnabled(True)
-            self.timer.start(30)
+            
+            # Start countdown before beginning analysis
+            self.countdown_active = True
+            self.countdown_seconds = 3
+            self.countdown_timer.start(1000)  # Update every second
+            self.status_bar.showMessage("🕐 Get ready! Starting in 3 seconds...")
+            
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start session:\n{e}")
     
@@ -963,6 +1213,11 @@ class MainWindow(QMainWindow):
         
         self.timer.stop()
         
+        # Stop countdown timer if active
+        if self.countdown_timer.isActive():
+            self.countdown_timer.stop()
+            self.countdown_active = False
+        
         # Stop session timing
         self.session_timer.stop()
         
@@ -976,6 +1231,8 @@ class MainWindow(QMainWindow):
         self.video_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.video_label.setText("Session stopped. Select a source to begin.")
+        
+        # Keep compact dashboard stats for review - user can manually reset
         
         # Show report after delay
         from PySide6.QtCore import QTimer
@@ -1003,6 +1260,75 @@ class MainWindow(QMainWindow):
                     self.session_duration_widget.value_label.setText(duration_text)
         except Exception as e:
             print(f"Error updating session duration: {e}")
+    
+    def update_countdown(self):
+        """Update countdown timer and start session when complete"""
+        try:
+            if self.countdown_seconds > 0:
+                self.countdown_seconds -= 1
+                # Force frame update to show countdown
+                if self.camera_manager and self.camera_manager.isOpened():
+                    frame = self.camera_manager.get_frame()
+                    if frame is not None:
+                        # Draw countdown overlay
+                        frame = self.draw_countdown_overlay(frame)
+                        self.display_frame_improved(frame)
+            else:
+                # Countdown finished, start actual analysis
+                self.countdown_timer.stop()
+                self.countdown_active = False
+                self.timer.start(30)  # Start main frame processing
+                self.status_bar.showMessage("🏋️ Session Started - Begin your workout!")
+        except Exception as e:
+            print(f"Error updating countdown: {e}")
+    
+    def draw_countdown_overlay(self, frame):
+        """Draw countdown overlay on video frame"""
+        try:
+            height, width = frame.shape[:2]
+            center_x, center_y = width // 2, height // 2
+            
+            # Draw semi-transparent background circle
+            overlay = frame.copy()
+            cv2.circle(overlay, (center_x, center_y), 100, (0, 0, 0), -1)
+            frame = cv2.addWeighted(frame, 0.6, overlay, 0.4, 0)
+            
+            # Draw countdown number or "START!"
+            font_scale = 4
+            thickness = 8
+            if self.countdown_seconds > 0:
+                text = str(self.countdown_seconds)
+                color = (0, 255, 255)  # Yellow
+            else:
+                text = "START!"
+                color = (0, 255, 0)    # Green
+                font_scale = 2.5
+                
+            # Get text size for centering
+            (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+            text_x = center_x - text_width // 2
+            text_y = center_y + text_height // 2
+            
+            # Draw text with black outline
+            cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness + 4)
+            cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
+            
+            # Draw instruction text
+            instruction = "Get ready to start squatting!"
+            if self.countdown_seconds <= 0:
+                instruction = "Begin your workout now!"
+                
+            (inst_width, inst_height), _ = cv2.getTextSize(instruction, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
+            inst_x = center_x - inst_width // 2
+            inst_y = center_y + 150
+            
+            cv2.putText(frame, instruction, (inst_x, inst_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 4)
+            cv2.putText(frame, instruction, (inst_x, inst_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            
+        except Exception as e:
+            print(f"Error drawing countdown overlay: {e}")
+        
+        return frame
     
     def update_frame(self):
         """Main update loop with enhanced display"""
@@ -1092,6 +1418,20 @@ class MainWindow(QMainWindow):
                 phase=phase,
                 fault_data=report.get('faults', [])
             )
+            
+            # Update session dashboard
+            if hasattr(self, 'compact_chart'):
+                # Initialize session start time on first rep
+                if self.session_start_time is None:
+                    self.session_start_time = time.time()
+                
+                # Update session tracking
+                self.session_reps = rep_count
+                current_score = report.get('score', 0)
+                self.session_scores.append(current_score)
+                
+                # Update the performance chart
+                self.compact_chart.add_rep_score(rep_count, current_score)
         
         # Status bar
         status_msg = (f"📊 FPS: {live_metrics.get('fps', 0):.1f} | "

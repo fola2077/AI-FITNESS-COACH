@@ -127,7 +127,9 @@ class DataLogger:
             'movement_phase_durations', 'peak_depth_angle', 'min_knee_angle',
             'max_knee_angle', 'depth_percentage', 'movement_smoothness',
             'bilateral_asymmetry', 'center_of_mass_deviation', 'postural_stability',
-            'voice_feedback_given', 'user_response_time', 'correction_made'
+            'voice_feedback_given', 'voice_messages_count', 'feedback_messages_generated',
+            'feedback_categories', 'enhanced_feedback_status', 'feedback_content',
+            'enhanced_feedback_content', 'user_response_time', 'correction_made'
         ]
         
         # Frame-level biomechanical data schema
@@ -312,8 +314,14 @@ class DataLogger:
             'center_of_mass_deviation': self._calculate_com_deviation(),
             'postural_stability': self._calculate_postural_stability(),
             
-            # Feedback data
-            'voice_feedback_given': feedback_data.get('voice_given', False) if feedback_data else False,
+            # Feedback data - enhanced with new feedback system
+            'voice_feedback_given': feedback_data.get('voice_messages_sent', 0) > 0 if feedback_data else False,
+            'voice_messages_count': feedback_data.get('voice_messages_sent', 0) if feedback_data else 0,
+            'feedback_messages_generated': feedback_data.get('messages_generated', 0) if feedback_data else 0,
+            'feedback_categories': ','.join(feedback_data.get('feedback_categories', [])) if feedback_data else '',
+            'enhanced_feedback_status': feedback_data.get('enhanced_feedback_status', 'not_available') if feedback_data else 'not_available',
+            'feedback_content': str(form_analysis.get('feedback', [])),
+            'enhanced_feedback_content': str(form_analysis.get('enhanced_feedback', {})),
             'user_response_time': feedback_data.get('response_time', 0) if feedback_data else 0,
             'correction_made': feedback_data.get('correction_made', False) if feedback_data else False
         })
@@ -369,7 +377,7 @@ class DataLogger:
         if self.config.auto_cleanup:
             self._cleanup_old_data()
         
-        print(f"📊 Session data logged: {completed_reps} reps, {len(self.frame_data_buffer)} frames")
+        print(f"📊 Session completed: {completed_reps} reps, {len(self.frame_data_buffer)} frames analyzed")
         print(f"   Session quality: {session_data['session_quality_score']:.1f}/100")
         print(f"   Average form score: {avg_score:.1f}/100")
         
