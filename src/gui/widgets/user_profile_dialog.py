@@ -79,7 +79,7 @@ class UserProfileDialog(QDialog):
             "This helps us personalize your experience"
         )
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter your name (e.g., Alex)")
+        self.name_input.setPlaceholderText("Enter your name (e.g., Fola)")
         self.name_input.setStyleSheet(self.get_modern_input_style())
         self.name_input.textChanged.connect(self.validate_name)
         name_section.layout().addWidget(self.name_input)

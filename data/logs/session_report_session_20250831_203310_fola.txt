@@ -1,10 +1,10 @@
 AI Fitness Coach - Session Report
 ===================================================
 
-Session ID: session_20250831_003323_main_user
-User: main_user
-Date: 2025-08-31T00:33:23.859094
-Duration: 17.5 seconds
+Session ID: session_20250831_203310_fola
+User: fola
+Date: 2025-08-31T20:33:10.312035
+Duration: 10.2 seconds
 
 Performance Summary:
 - Total Reps: 1
@@ -21,4 +21,4 @@ Data Logged:
 - ML Training Records: 300
 
 Rep-by-Rep Breakdown:
-  Rep 1: Score 0.0, Faults 1, Duration 16.5s
+  Rep 1: Score 0.0, Faults 1, Duration 9.1s
