@@ -1,0 +1,6 @@
+session_id,user_id,timestamp,session_start,session_end,total_duration_seconds,total_reps,completed_reps,failed_reps,average_form_score,best_form_score,worst_form_score,total_faults,safety_faults,form_faults,depth_faults,user_skill_level,difficulty_level,difficulty_changes_count,exercise_type,voice_feedback_enabled,session_quality_score,improvement_score,fatigue_detected,session_notes,system_version
+session_20250901_031719_phil,phil,1756693039.2741337,2025-09-01T03:17:19.274133,2025-09-01T03:18:08.837379,49.56324529647827,1,1,0,0.0,0,0,0,,,,INTERMEDIATE,,,squat,True,100.0,0.0,False,,2.0
+session_20250901_031946_user,user,1756693186.6083615,2025-09-01T03:19:46.608361,2025-09-01T03:20:00.875501,14.267139673233032,1,1,0,89.0,89,89,1,,,,INTERMEDIATE,,,squat,True,100.0,0.0,False,,2.0
+session_20250901_032058_user,user,1756693258.0710483,2025-09-01T03:20:58.071048,2025-09-01T03:21:12.116968,14.045920610427856,1,1,0,89.0,89,89,1,,,,INTERMEDIATE,,,squat,True,100.0,0.0,False,,2.0
+session_20250901_032244_user,user,1756693364.0110028,2025-09-01T03:22:44.011003,2025-09-01T03:23:31.273593,47.26259112358093,1,1,0,96.0,96,96,1,,,,INTERMEDIATE,,,squat,True,100.0,0.0,False,,2.0
+session_20250901_032505_phil,phil,1756693505.7771573,2025-09-01T03:25:05.777157,2025-09-01T03:25:54.836984,49.05982708930969,1,1,0,96.0,96,96,1,,,,INTERMEDIATE,,,squat,True,100.0,0.0,False,,2.0

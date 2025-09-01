@@ -785,7 +785,15 @@ class DepthAnalyzer(BaseAnalyzer):
         bonuses = []
         
         # Get skill-based thresholds (default to intermediate if not available)
-        user_skill = frame_metrics[0].skill_level if frame_metrics else 'INTERMEDIATE'
+        user_skill = 'INTERMEDIATE'  # Default fallback
+        if frame_metrics and len(frame_metrics) > 0:
+            # Try to get skill level from frame metrics first
+            if hasattr(frame_metrics[0], 'skill_level') and frame_metrics[0].skill_level:
+                user_skill = frame_metrics[0].skill_level
+            # Otherwise use the grader's user profile skill level
+            elif self.user_profile and hasattr(self.user_profile, 'skill_level'):
+                user_skill = str(self.user_profile.skill_level).replace('UserLevel.', '').upper()
+                
         micro_threshold = self._get_skill_adjusted_micro_threshold(user_skill)
         depth_threshold = self._get_skill_adjusted_depth_threshold(user_skill)
         
@@ -2192,7 +2200,7 @@ class IntelligentFormGrader:
             # Add difficulty tracking data for CSV logging
             'difficulty_data': {
                 'difficulty_level': self.difficulty,
-                'skill_level': self.skill_level,
+                'skill_level': self.user_profile.skill_level.value if self.user_profile and self.user_profile.skill_level else self.difficulty,
                 'threshold_multiplier': self.difficulty_thresholds.get(self.difficulty, 1.0),
                 'component_weights': self.component_weights,
                 'active_analyzers': list(self.component_weights.keys())
