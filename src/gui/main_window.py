@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayo
                              QSizePolicy, QStackedWidget)
 from PySide6.QtGui import (QImage, QPixmap, QAction, QFont, QPainter, QPen, 
                           QBrush, QColor, QConicalGradient, QLinearGradient)
-from PySide6.QtCore import Qt, QTimer, QRect
+from PySide6.QtCore import Qt, QTimer, QRect, QPointF
 from src.capture.camera import CameraManager
 from src.processing.pose_processor import PoseProcessor
 from src.grading.advanced_form_grader import UserProfile, UserLevel, IntelligentFormGrader, ThresholdConfig
@@ -353,108 +353,80 @@ class MetricDisplayWidget(QWidget):
         """Update the displayed value"""
         self.value_label.setText(str(value))
 
-class CompactPerformanceChart(QWidget):
-    """Compact real-time performance chart for session dashboard"""
+class SparklineWidget(QWidget):
+    """Ultra-minimalist sparkline showing only the performance trend"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.data_points = []
-        self.max_points = 15  # Show last 15 reps
-        self.setMinimumHeight(80)
-        self.current_rep = 0
-        self.current_score = 0
+        self.max_points = 20  # Store more points for smoother line
+        self.setMinimumHeight(40)
+        self.setToolTip("Performance Trend")
         
         self.setStyleSheet("""
             QWidget {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2a2a2a, stop:1 #1e1e1e);
-                border: 1px solid #444;
-                border-radius: 8px;
-                margin: 2px;
+                background: transparent;
+                border: none;
             }
         """)
-    
-    def add_rep_score(self, rep_count, score):
-        """Add a new rep with its form score"""
-        self.current_rep = rep_count
-        self.current_score = score
+
+    def add_score(self, score):
+        """Add a new score to the sparkline"""
         self.data_points.append(float(score))
-        
         if len(self.data_points) > self.max_points:
             self.data_points.pop(0)
         self.update()
-    
-    def reset_chart(self):
-        """Reset the chart data"""
+
+    def reset(self):
+        """Reset the sparkline data"""
         self.data_points = []
-        self.current_rep = 0
-        self.current_score = 0
         self.update()
-    
+
     def paintEvent(self, event):
-        """Draw the compact performance chart"""
+        """Draw the minimalist sparkline"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        
-        # Fill background
-        painter.fillRect(self.rect(), QColor("#1e1e1e"))
-        
-        # Draw current stats text (top area)
-        painter.setPen(QColor("#ffffff"))
-        painter.setFont(QFont("Arial", 9, QFont.Bold))
-        
-        stats_text = f"Rep: {self.current_rep} | Score: {self.current_score:.1f}%"
-        painter.drawText(10, 15, stats_text)
-        
-        # Draw chart if we have data
+
         if len(self.data_points) < 2:
+            # Show a subtle placeholder message
             painter.setPen(QColor("#666666"))
-            painter.setFont(QFont("Arial", 8))
-            painter.drawText(10, 50, "Start exercising to see performance...")
+            painter.setFont(QFont("Arial", 9))
+            painter.drawText(self.rect(), Qt.AlignCenter, "Performance trend will appear here")
             return
-        
-        # Calculate chart area (lower 60% of widget)
-        margin = 8
-        chart_width = self.width() - 2 * margin
-        chart_height = self.height() - 35  # Leave space for stats text
-        chart_top = 25
-        
+
+        # Define chart area with small margins
+        rect = self.rect().adjusted(4, 4, -4, -4)
+        chart_width = rect.width()
+        chart_height = rect.height()
+
         # Find min/max for scaling
         min_val = min(self.data_points)
         max_val = max(self.data_points)
         if max_val == min_val:
-            max_val = min_val + 10  # Avoid division by zero
-        
-        # Draw subtle grid
-        painter.setPen(QPen(QColor("#333333"), 1))
-        for i in range(3):  # 3 horizontal lines
-            y = chart_top + (i * chart_height // 2)
-            painter.drawLine(margin, y, self.width() - margin, y)
-        
-        # Draw performance line
-        painter.setPen(QPen(QColor("#4CAF50"), 2))
-        
-        for i in range(len(self.data_points) - 1):
-            # Calculate x positions
-            x1 = margin + (i * chart_width // max(self.max_points - 1, 1))
-            x2 = margin + ((i + 1) * chart_width // max(self.max_points - 1, 1))
-            
-            # Calculate y positions (invert for screen coordinates)
-            y1 = chart_top + chart_height - int(((self.data_points[i] - min_val) / (max_val - min_val)) * chart_height)
-            y2 = chart_top + chart_height - int(((self.data_points[i + 1] - min_val) / (max_val - min_val)) * chart_height)
-            
-            painter.drawLine(x1, y1, x2, y2)
-            
-            # Draw dots at data points
-            painter.setPen(QPen(QColor("#81C784"), 1))
-            painter.setBrush(QBrush(QColor("#4CAF50")))
-            painter.drawEllipse(x1 - 2, y1 - 2, 4, 4)
-        
-        # Draw the last point
-        if self.data_points:
-            last_i = len(self.data_points) - 1
-            x_last = margin + (last_i * chart_width // max(self.max_points - 1, 1))
-            y_last = chart_top + chart_height - int(((self.data_points[-1] - min_val) / (max_val - min_val)) * chart_height)
-            painter.drawEllipse(x_last - 2, y_last - 2, 4, 4)
+            max_val = min_val + 1  # Avoid division by zero
+
+        # Determine line color based on recent performance
+        if len(self.data_points) > 0:
+            recent_scores = self.data_points[-3:] if len(self.data_points) >= 3 else self.data_points
+            avg_score = sum(recent_scores) / len(recent_scores)
+            if avg_score >= 85:
+                line_color = QColor("#4CAF50")  # Green
+            elif avg_score >= 70:
+                line_color = QColor("#FFC107")  # Amber
+            else:
+                line_color = QColor("#FF5722")  # Red
+        else:
+            line_color = QColor("#FFFFFF")
+
+        # Create points for the sparkline
+        points = []
+        for i, value in enumerate(self.data_points):
+            x = rect.left() + (i * chart_width / max(len(self.data_points) - 1, 1))
+            y = rect.bottom() - ((value - min_val) / (max_val - min_val)) * chart_height
+            points.append(QPointF(x, y))
+
+        # Draw the clean sparkline
+        painter.setPen(QPen(line_color, 2))
+        painter.drawPolyline(points)
 
 class MainWindow(QMainWindow):
     """Modern AI Fitness Coach Main Window with Welcome Screen System"""
@@ -806,23 +778,59 @@ class MainWindow(QMainWindow):
         return panel
     
     def _create_compact_session_dashboard(self):
-        """Create a compact session dashboard with just a performance chart"""
-        dashboard_card = ModernCardWidget("📊 Performance Chart")
-        dashboard_card.setMaximumHeight(120)  # Keep it compact
+        """Create a compact session dashboard with minimalist sparkline and clear stats"""
+        dashboard_card = ModernCardWidget("📊 Performance Trend")
+        dashboard_card.setMaximumHeight(120)
         dashboard_card.setMinimumHeight(120)
-        
+
         # Create main layout
         main_layout = QHBoxLayout()
-        main_layout.setSpacing(10)
+        main_layout.setSpacing(15)
+
+        # Sparkline widget (clean trend line only)
+        self.sparkline_widget = SparklineWidget()
+        main_layout.addWidget(self.sparkline_widget, 2)  # Takes most space
+
+        # Vertical separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        separator.setStyleSheet("color: #555; background-color: #555;")
+        main_layout.addWidget(separator)
+
+        # Stats section with clear labels
+        stats_layout = QVBoxLayout()
+        stats_layout.setSpacing(8)
         
-        # Create simple performance chart
-        self.compact_chart = CompactPerformanceChart()
-        main_layout.addWidget(self.compact_chart, 1)  # Take most space
+        # Rep count label
+        self.rep_count_label = QLabel("Rep: --")
+        self.rep_count_label.setStyleSheet("""
+            QLabel {
+                color: #FFFFFF;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 4px;
+            }
+        """)
         
-        # Reset button for session (smaller, on the right)
+        # Score label with dynamic color
+        self.avg_score_label = QLabel("Score: --%")
+        self.avg_score_label.setStyleSheet("""
+            QLabel {
+                color: #4CAF50;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 4px;
+            }
+        """)
+
+        stats_layout.addWidget(self.rep_count_label)
+        stats_layout.addWidget(self.avg_score_label)
+        stats_layout.addStretch()
+
+        # Reset button (compact)
         reset_button = QPushButton("🔄")
-        reset_button.setMaximumWidth(40)
-        reset_button.setMaximumHeight(40)
+        reset_button.setFixedSize(35, 35)
         reset_button.setToolTip("Reset Session")
         reset_button.setStyleSheet("""
             QPushButton {
@@ -830,8 +838,8 @@ class MainWindow(QMainWindow):
                     stop:0 #607D8B, stop:1 #455A64);
                 color: white;
                 border: none;
-                border-radius: 20px;
-                font-size: 14px;
+                border-radius: 17px;
+                font-size: 16px;
                 font-weight: bold;
             }
             QPushButton:hover {
@@ -840,16 +848,17 @@ class MainWindow(QMainWindow):
             }
         """)
         reset_button.clicked.connect(self._reset_session)
-        
-        main_layout.addWidget(reset_button, 0)  # No stretch - fixed size
+        stats_layout.addWidget(reset_button)
+
+        main_layout.addLayout(stats_layout, 1)  # Stats take less space
         
         dashboard_card.content_layout.addLayout(main_layout)
-        
+
         # Initialize session tracking
         self.session_start_time = None
         self.session_reps = 0
         self.session_scores = []
-        
+
         return dashboard_card
     
     def _reset_session(self):
@@ -858,9 +867,20 @@ class MainWindow(QMainWindow):
         self.session_reps = 0
         self.session_scores = []
         
-        # Reset compact chart
-        if hasattr(self, 'compact_chart'):
-            self.compact_chart.reset_chart()
+        # Reset sparkline widget and labels
+        if hasattr(self, 'sparkline_widget'):
+            self.sparkline_widget.reset()
+            self.rep_count_label.setText("Rep: --")
+            self.avg_score_label.setText("Score: --%")
+            # Reset label color to default
+            self.avg_score_label.setStyleSheet("""
+                QLabel {
+                    color: #4CAF50;
+                    font-size: 16px;
+                    font-weight: bold;
+                    padding: 4px;
+                }
+            """)
         
         print("🔄 Session stats reset")
     
@@ -1419,8 +1439,8 @@ class MainWindow(QMainWindow):
                 fault_data=report.get('faults', [])
             )
             
-            # Update session dashboard
-            if hasattr(self, 'compact_chart'):
+            # Update session dashboard with sparkline
+            if hasattr(self, 'sparkline_widget'):
                 # Initialize session start time on first rep
                 if self.session_start_time is None:
                     self.session_start_time = time.time()
@@ -1430,8 +1450,31 @@ class MainWindow(QMainWindow):
                 current_score = report.get('score', 0)
                 self.session_scores.append(current_score)
                 
-                # Update the performance chart
-                self.compact_chart.add_rep_score(rep_count, current_score)
+                # Update the sparkline and labels
+                self.sparkline_widget.add_score(current_score)
+                self.rep_count_label.setText(f"Rep: {self.session_reps}")
+                
+                # Calculate and display average score with color coding
+                if self.session_scores:
+                    avg_score = sum(self.session_scores) / len(self.session_scores)
+                    self.avg_score_label.setText(f"Score: {avg_score:.1f}%")
+                    
+                    # Update label color based on performance
+                    if avg_score >= 85:
+                        color = "#4CAF50"  # Green
+                    elif avg_score >= 70:
+                        color = "#FFC107"  # Amber
+                    else:
+                        color = "#FF5722"  # Red
+                    
+                    self.avg_score_label.setStyleSheet(f"""
+                        QLabel {{
+                            color: {color};
+                            font-size: 16px;
+                            font-weight: bold;
+                            padding: 4px;
+                        }}
+                    """)
         
         # Status bar
         status_msg = (f"📊 FPS: {live_metrics.get('fps', 0):.1f} | "
@@ -1908,13 +1951,25 @@ class MainWindow(QMainWindow):
         new_skill_level = skill_mapping.get(difficulty, UserLevel.INTERMEDIATE)
         self.user_profile.skill_level = new_skill_level
         
-        # Update pose processor with new configuration
+        # FIXED: Update existing form_grader instead of recreating entire PoseProcessor
         try:
-            self.pose_processor = PoseProcessor(
-                user_profile=self.user_profile,
-                threshold_config=self.threshold_config
-            )
-            print(f"Difficulty changed to: {difficulty} (Skill Level: {new_skill_level.value})")
+            if hasattr(self.pose_processor, 'form_grader') and self.pose_processor.form_grader:
+                # Update the existing form_grader difficulty (preserves session state)
+                old_difficulty = self.pose_processor.form_grader.difficulty
+                self.pose_processor.form_grader.set_difficulty(difficulty)
+                
+                # Log difficulty change for CSV tracking
+                if hasattr(self.pose_processor, 'data_logger'):
+                    self.pose_processor.data_logger.log_difficulty_change(old_difficulty, difficulty)
+                
+                print(f"Difficulty changed to: {difficulty} (Skill Level: {new_skill_level.value})")
+            else:
+                # Only recreate if no form_grader exists
+                self.pose_processor = PoseProcessor(
+                    user_profile=self.user_profile,
+                    threshold_config=self.threshold_config
+                )
+                print(f"Difficulty changed to: {difficulty} (Skill Level: {new_skill_level.value}) - New PoseProcessor created")
         except Exception as e:
             print(f"Error updating difficulty: {e}")
             # Fallback - just change the form grader difficulty if pose processor update fails

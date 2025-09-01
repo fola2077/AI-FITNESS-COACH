@@ -1,0 +1,24 @@
+AI Fitness Coach - Session Report
+===================================================
+
+Session ID: session_20250901_012155_user
+User: user
+Date: 2025-09-01T01:21:55.466216
+Duration: 13.9 seconds
+
+Performance Summary:
+- Total Reps: 1
+- Average Score: 90.0/100
+- Best Score: 90.0/100
+- Session Quality: 100.0/100
+- Improvement: 0.0
+- Fatigue Detected: No
+
+Data Logged:
+- Session Records: 1
+- Rep Records: 1
+- Frame Records: 297
+- ML Training Records: 297
+
+Rep-by-Rep Breakdown:
+  Rep 1: Score 90.0, Faults 1, Duration 9.0s

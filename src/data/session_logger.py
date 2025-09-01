@@ -84,11 +84,16 @@ class DataLogger:
         # CSV field definitions
         self._define_csv_schemas()
         
-        print(f"✅ Data logging system initialized")
+        # ENHANCED: Initialize difficulty tracking
+        self.current_difficulty_level = "beginner"
+        self.difficulty_changes = []  # Track difficulty changes during session
+        
+        print(f"✅ Data logging system initialized with difficulty tracking")
         print(f"   Output directory: {self.config.base_output_dir}")
         print(f"   Frame logging: {self.config.log_frame_level}")
         print(f"   Rep logging: {self.config.log_rep_level}")
         print(f"   Session logging: {self.config.log_session_level}")
+        print(f"   Difficulty tracking: Enabled")
     
     def _setup_directories(self):
         """Create all necessary directories for data logging"""
@@ -112,7 +117,8 @@ class DataLogger:
             'total_duration_seconds', 'total_reps', 'completed_reps', 'failed_reps',
             'average_form_score', 'best_form_score', 'worst_form_score',
             'total_faults', 'safety_faults', 'form_faults', 'depth_faults',
-            'user_skill_level', 'exercise_type', 'voice_feedback_enabled',
+            'user_skill_level', 'difficulty_level', 'difficulty_changes_count',  # ENHANCED: Added difficulty tracking
+            'exercise_type', 'voice_feedback_enabled',
             'session_quality_score', 'improvement_score', 'fatigue_detected',
             'session_notes', 'system_version'
         ]
@@ -129,7 +135,13 @@ class DataLogger:
             'bilateral_asymmetry', 'center_of_mass_deviation', 'postural_stability',
             'voice_feedback_given', 'voice_messages_count', 'feedback_messages_generated',
             'feedback_categories', 'enhanced_feedback_status', 'feedback_content',
-            'enhanced_feedback_content', 'user_response_time', 'correction_made'
+            'enhanced_feedback_content', 'user_response_time', 'correction_made',
+            # ENHANCED: Added comprehensive difficulty analysis fields
+            'difficulty_level_used', 'skill_level_used', 'threshold_multiplier_applied',
+            'active_analyzers_count', 'active_analyzers_list', 'component_weights_used',
+            'safety_weight', 'depth_weight', 'stability_weight', 'tempo_weight',
+            'symmetry_weight', 'butt_wink_weight', 'knee_valgus_weight', 
+            'head_position_weight', 'foot_stability_weight'
         ]
         
         # Frame-level biomechanical data schema
@@ -141,7 +153,9 @@ class DataLogger:
             'ankle_symmetry_ratio', 'weight_distribution_ratio', 'postural_sway',
             'base_of_support_width', 'landmark_visibility', 'frame_quality_score',
             'head_position_x', 'head_position_y', 'shoulder_alignment',
-            'heel_lift_left', 'heel_lift_right', 'foot_stability_score'
+            'heel_lift_left', 'heel_lift_right', 'foot_stability_score',
+            # ENHANCED: Added difficulty context to frame data
+            'difficulty_level', 'threshold_multiplier_active'
         ]
         
         # ML training dataset schema (comprehensive)
@@ -167,6 +181,9 @@ class DataLogger:
             # Context features
             'rep_number', 'session_progress', 'user_fatigue_level', 'skill_level',
             'frame_quality', 'landmark_confidence', 'previous_rep_score',
+            # ENHANCED: Added difficulty context for ML training
+            'difficulty_level', 'threshold_multiplier', 'component_weight_distribution',
+            'safety_threshold_used', 'depth_threshold_used', 'stability_threshold_used',
             
             # Sequence features (for temporal ML models)
             'velocity_trend', 'acceleration_trend', 'angle_trend', 'stability_trend'
@@ -197,6 +214,34 @@ class DataLogger:
         
         print(f"📊 Data logging session started: {self.current_session_id}")
         return self.current_session_id
+    
+    def log_difficulty_change(self, new_difficulty: str, rep_number: int = None, 
+                             threshold_multiplier: float = None, skill_level: str = None):
+        """Log difficulty level changes during session"""
+        if not self.current_session_id:
+            return
+        
+        old_difficulty = self.current_difficulty_level
+        self.current_difficulty_level = new_difficulty
+        
+        change_record = {
+            'timestamp': time.time(),
+            'rep_number': rep_number or len(self.rep_data_buffer) + 1,
+            'from_difficulty': old_difficulty,
+            'to_difficulty': new_difficulty,
+            'threshold_multiplier': threshold_multiplier,
+            'skill_level': skill_level,
+            'change_reason': 'user_selection'
+        }
+        
+        self.difficulty_changes.append(change_record)
+        
+        print(f"🎯 Difficulty changed: {old_difficulty} → {new_difficulty} (Rep {change_record['rep_number']})")
+        
+        # Update session data with latest difficulty
+        if self.session_data_buffer:
+            self.session_data_buffer[0]['difficulty_level'] = new_difficulty
+            self.session_data_buffer[0]['difficulty_changes_count'] = len(self.difficulty_changes)
     
     def log_rep_start(self, rep_number: int) -> str:
         """Log the start of a new repetition"""
@@ -303,6 +348,25 @@ class DataLogger:
             'faults_detected': len(form_analysis.get('faults', [])),
             'fault_categories': ','.join(form_analysis.get('fault_categories', [])),
             'fault_severities': ','.join(form_analysis.get('fault_severities', [])),
+            
+            # ENHANCED: Difficulty analysis tracking
+            'difficulty_level_used': form_analysis.get('difficulty_level', self.current_difficulty_level),
+            'skill_level_used': form_analysis.get('skill_level', 'unknown'),
+            'threshold_multiplier_applied': form_analysis.get('threshold_multiplier', 1.0),
+            'active_analyzers_count': form_analysis.get('active_analyzers_count', 0),
+            'active_analyzers_list': '|'.join(form_analysis.get('active_analyzers', [])),
+            'component_weights_used': form_analysis.get('component_weights_summary', ''),
+            
+            # Component weight breakdown
+            'safety_weight': self._extract_component_weight(form_analysis, 'safety'),
+            'depth_weight': self._extract_component_weight(form_analysis, 'depth'),
+            'stability_weight': self._extract_component_weight(form_analysis, 'stability'),
+            'tempo_weight': self._extract_component_weight(form_analysis, 'tempo'),
+            'symmetry_weight': self._extract_component_weight(form_analysis, 'symmetry'),
+            'butt_wink_weight': self._extract_component_weight(form_analysis, 'butt_wink'),
+            'knee_valgus_weight': self._extract_component_weight(form_analysis, 'knee_valgus'),
+            'head_position_weight': self._extract_component_weight(form_analysis, 'head_position'),
+            'foot_stability_weight': self._extract_component_weight(form_analysis, 'foot_stability'),
             
             # Movement analysis
             'peak_depth_angle': self._calculate_peak_depth(),
@@ -619,6 +683,15 @@ class DataLogger:
         decline_threshold = 15  # 15 point decline indicates fatigue
         return (avg_early - avg_recent) > decline_threshold
     
+    def _extract_component_weight(self, form_analysis: Dict, component_name: str) -> float:
+        """Extract weight for a specific component from form analysis"""
+        component_scores = form_analysis.get('component_scores', {})
+        if component_name in component_scores:
+            comp_data = component_scores[component_name]
+            if isinstance(comp_data, dict):
+                return comp_data.get('weight', 0.0)
+        return 0.0
+    
     def _write_session_data(self):
         """Write session data to CSV file"""
         if not self.session_data_buffer:
@@ -794,7 +867,14 @@ class DataLogger:
             'velocity_trend': self._calculate_velocity_trend(frame_data),
             'acceleration_trend': self._calculate_acceleration_trend(frame_data),
             'angle_trend': self._calculate_angle_trend(frame_data),
-            'stability_trend': self._calculate_stability_trend(frame_data)
+            'stability_trend': self._calculate_stability_trend(frame_data),
+            
+            # ENHANCED: Difficulty context for ML training
+            'difficulty_level': rep_data.get('difficulty_level_used', session_data.get('difficulty_level', 'beginner')),
+            'difficulty_threshold_multiplier': rep_data.get('threshold_multiplier_applied', 1.0),
+            'component_weight_safety': rep_data.get('safety_weight', 0.0),
+            'component_weight_depth': rep_data.get('depth_weight', 0.0),
+            'component_weight_stability': rep_data.get('stability_weight', 0.0)
         }
         
         return {field: ml_record.get(field, '') for field in self.ml_schema}

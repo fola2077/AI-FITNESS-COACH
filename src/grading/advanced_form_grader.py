@@ -617,6 +617,9 @@ class SafetyAnalyzer(BaseAnalyzer):
         min_back_angle = np.min(back_angles)
         avg_back_angle = np.mean(back_angles)
         
+        # Debug: Show actual back angle vs thresholds
+        print(f"🔧 BACK ANGLE DEBUG: min={min_back_angle:.1f}°, severe_thresh={self.SEVERE_BACK_ROUNDING_THRESHOLD:.1f}°, moderate_thresh={self.MODERATE_BACK_ROUNDING_THRESHOLD:.1f}°")
+        
         faults = []
         penalties = []
         bonuses = []
@@ -625,20 +628,32 @@ class SafetyAnalyzer(BaseAnalyzer):
         # Back angle ranges: 180° = perfectly upright, 90° = horizontal
         if min_back_angle < self.SEVERE_BACK_ROUNDING_THRESHOLD:  # < 60° - very dangerous
             faults.append('SEVERE_BACK_ROUNDING')
+            # Log the exact comparison for debugging
+            print(f"🔧 SAFETY DEBUG: Back angle {min_back_angle:.1f}° < SEVERE threshold {self.SEVERE_BACK_ROUNDING_THRESHOLD:.1f}° = SEVERE")
             # More severe penalty for dangerous postures
-            # Base penalty 60, plus 3 points per degree below threshold
-            penalty_amount = 60 + (self.SEVERE_BACK_ROUNDING_THRESHOLD - min_back_angle) * 3.0
+            degrees_below = self.SEVERE_BACK_ROUNDING_THRESHOLD - min_back_angle
+            # Scale penalty based on difficulty strictness - lower threshold = higher multiplier
+            strictness_multiplier = 80.0 / self.SEVERE_BACK_ROUNDING_THRESHOLD  # Beginner ~1.0, Expert ~1.3
+            penalty_amount = 40 + degrees_below * 2.0 * strictness_multiplier
+            print(f"🔧 SEVERE PENALTY DEBUG: degrees_below={degrees_below:.1f}, strictness={strictness_multiplier:.2f}, penalty={penalty_amount:.1f}")
             penalties.append({
                 'reason': 'DANGER: Severe back rounding detected!', 
-                'amount': min(75, penalty_amount),  # Increased cap to 75
+                'amount': min(80, penalty_amount),  # Increased cap to allow for difficulty differences
                 'metric_value': min_back_angle
             })
         elif min_back_angle < self.MODERATE_BACK_ROUNDING_THRESHOLD:  # < 90° - excessive lean
             faults.append('BACK_ROUNDING')
-            penalty_amount = 15 + (self.MODERATE_BACK_ROUNDING_THRESHOLD - min_back_angle) * 1.2
+            # For same back angle, Expert should give higher penalty than Beginner
+            # Use a fixed reference angle (100°) and scale penalty by difficulty strictness
+            reference_good_angle = 100.0  # Minimum acceptable back angle
+            angle_deficit = max(0, reference_good_angle - min_back_angle)  # How far below acceptable
+            # Higher strictness (lower threshold) = higher multiplier
+            strictness_multiplier = 150.0 / self.MODERATE_BACK_ROUNDING_THRESHOLD  # Beginner ~1.1, Expert ~1.6
+            penalty_amount = 15 + angle_deficit * 1.5 * strictness_multiplier
+            print(f"🔧 MODERATE PENALTY: angle={min_back_angle:.1f}°, threshold={self.MODERATE_BACK_ROUNDING_THRESHOLD:.1f}°, deficit={angle_deficit:.1f}, strictness={strictness_multiplier:.2f}, penalty={penalty_amount:.1f}")
             penalties.append({
                 'reason': 'Back rounding - keep chest up and spine neutral', 
-                'amount': min(25, penalty_amount),
+                'amount': min(70, penalty_amount),  # High cap to allow full difficulty range
                 'metric_value': min_back_angle
             })
         elif min_back_angle >= self.EXCELLENT_POSTURE_THRESHOLD:  # >= 120° - excellent
@@ -739,6 +754,11 @@ class DepthAnalyzer(BaseAnalyzer):
         if not isinstance(config, ThresholdConfig):
             raise TypeError("DepthAnalyzer requires a valid ThresholdConfig object")
         self.config = config
+        
+        # Initialize thresholds from config (will be updated by difficulty scaling)
+        self.BAD_SHALLOW_THRESHOLD = self.config.depth_bad_shallow_threshold
+        self.INSUFFICIENT_THRESHOLD = self.config.depth_insufficient_threshold
+        self.MOVEMENT_RANGE_THRESHOLD = self.config.depth_movement_range_threshold
     
     def _check_difficulty(self, difficulty: str) -> bool:
         # FIXED: Enable depth analysis for ALL difficulty levels - depth is critical for safety!
@@ -1536,6 +1556,14 @@ class IntelligentFormGrader:
         # Set initial difficulty
         self.set_difficulty(difficulty)
         
+        # Initialize difficulty thresholds mapping for logging
+        self.difficulty_thresholds = {
+            'beginner': 1.1,
+            'casual': 1.0,
+            'professional': 0.9,
+            'expert': 0.8
+        }
+        
         # Initialize enhanced feedback system (new Phase 2 integration)
         self.enhanced_feedback_enabled = True
         self.enhanced_feedback_manager = None
@@ -1708,27 +1736,108 @@ class IntelligentFormGrader:
             difficulty = 'casual'
         
         self.difficulty = difficulty
+        
+        # CRITICAL FIX: Map difficulty to user skill level for weight calculation
+        difficulty_to_skill = {
+            'beginner': UserLevel.BEGINNER,
+            'casual': UserLevel.INTERMEDIATE,  # Map casual to intermediate
+            'professional': UserLevel.ADVANCED,
+            'expert': UserLevel.EXPERT
+        }
+        
+        # Update user profile skill level to match difficulty
+        if self.user_profile:
+            self.user_profile.skill_level = difficulty_to_skill[difficulty]
+        
         self._update_difficulty_thresholds()
-        logger.debug(f"FormGrader: Difficulty updated to: {self.difficulty}")
+        
+        # Update component weights based on new difficulty/skill level
+        self.component_weights = self._get_skill_based_weights()
+        
+        logger.debug(f"FormGrader: Difficulty updated to: {self.difficulty}, skill level: {difficulty_to_skill[difficulty]}")
     
     def _update_difficulty_thresholds(self) -> None:
-        """Update analyzer configurations based on difficulty level - UPDATED for 4 levels"""
+        """Update analyzer configurations based on difficulty level with proper threshold scaling"""
+        
+        # Define difficulty scaling factors
+        # Higher difficulty = stricter thresholds = lower scores for same performance
         if self.difficulty == 'beginner':
-            # Most forgiving thresholds, focus only on safety
-            for analyzer in self.analyzers.values():
-                analyzer.min_visibility_threshold = 0.6
+            # Most forgiving thresholds (easiest to get high scores)
+            threshold_multiplier = 1.1  # 10% more forgiving (was 1.2)
+            visibility_threshold = 0.6
         elif self.difficulty == 'casual':
-            # Standard thresholds, include basic analysis
-            for analyzer in self.analyzers.values():
-                analyzer.min_visibility_threshold = 0.7
+            # Standard thresholds (baseline)
+            threshold_multiplier = 1.0  # No change from config
+            visibility_threshold = 0.7
         elif self.difficulty == 'professional':
-            # Stricter thresholds, most analyzers active
-            for analyzer in self.analyzers.values():
-                analyzer.min_visibility_threshold = 0.8
+            # Stricter thresholds (harder to get high scores)
+            threshold_multiplier = 0.9  # 10% stricter (was 0.85)
+            visibility_threshold = 0.8
         elif self.difficulty == 'expert':
-            # Strictest thresholds, all analyzers active with high precision
-            for analyzer in self.analyzers.values():
-                analyzer.min_visibility_threshold = 0.85
+            # Strictest thresholds (hardest to get high scores)
+            threshold_multiplier = 0.8  # 20% stricter (was 0.7)
+            visibility_threshold = 0.85
+        
+        # Apply visibility thresholds
+        for analyzer in self.analyzers.values():
+            analyzer.min_visibility_threshold = visibility_threshold
+        
+        # Apply threshold scaling to specific analyzers
+        self._apply_difficulty_scaling(threshold_multiplier)
+        
+        logger.debug(f"FormGrader: Difficulty {self.difficulty} applied with {threshold_multiplier}x scaling")
+    
+    def _apply_difficulty_scaling(self, multiplier: float) -> None:
+        """Apply difficulty scaling to analyzer thresholds"""
+        
+        # Scale Safety Analyzer thresholds
+        safety_analyzer = self.analyzers.get('safety')
+        if safety_analyzer:
+            # CORRECTED LOGIC: For safety thresholds, MULTIPLY to make stricter, DIVIDE to make more forgiving
+            # Expert (0.7): threshold * 0.7 = LOWER threshold = MORE STRICT  
+            # Beginner (1.2): threshold * 1.2 = HIGHER threshold = MORE FORGIVING
+            safety_analyzer.SEVERE_BACK_ROUNDING_THRESHOLD = self.config.safety_severe_back_rounding * multiplier
+            safety_analyzer.MODERATE_BACK_ROUNDING_THRESHOLD = self.config.safety_moderate_back_rounding * multiplier
+            safety_analyzer.EXCELLENT_POSTURE_THRESHOLD = self.config.safety_excellent_posture * multiplier
+        
+        # Scale Depth Analyzer thresholds  
+        depth_analyzer = self.analyzers.get('depth')
+        if depth_analyzer:
+            # For depth: higher knee angles = shallower squat
+            # CORRECTED: For more forgiving (beginner), allow shallower squats (higher threshold)
+            depth_analyzer.BAD_SHALLOW_THRESHOLD = self.config.depth_bad_shallow_threshold * multiplier
+            depth_analyzer.INSUFFICIENT_THRESHOLD = self.config.depth_insufficient_threshold * multiplier
+            depth_analyzer.MOVEMENT_RANGE_THRESHOLD = self.config.depth_movement_range_threshold / multiplier
+        
+        # Scale Stability Analyzer thresholds
+        stability_analyzer = self.analyzers.get('stability') 
+        if stability_analyzer:
+            # For stability: higher sway = worse stability
+            # CORRECTED: For more forgiving (beginner), allow more sway (higher threshold)
+            stability_analyzer.SEVERE_INSTABILITY_THRESHOLD = self.config.stability_severe_instability * multiplier
+            stability_analyzer.POOR_STABILITY_THRESHOLD = self.config.stability_poor_stability * multiplier
+            stability_analyzer.EXCELLENT_STABILITY_THRESHOLD = self.config.stability_excellent_stability * multiplier
+        
+        # Scale other analyzers if they have relevant thresholds
+        butt_wink_analyzer = self.analyzers.get('butt_wink')
+        if butt_wink_analyzer:
+            butt_wink_analyzer.STD_THRESHOLD = self.config.butt_wink_std_threshold * multiplier
+            butt_wink_analyzer.RANGE_THRESHOLD = self.config.butt_wink_range_threshold * multiplier
+        
+        knee_valgus_analyzer = self.analyzers.get('knee_valgus')
+        if knee_valgus_analyzer:
+            # Lower ratio = worse knee tracking
+            # CORRECTED: For more forgiving (beginner), allow worse knee tracking (lower threshold)
+            knee_valgus_analyzer.RATIO_THRESHOLD = self.config.knee_valgus_ratio_threshold / multiplier
+        
+        # Scale tempo thresholds
+        tempo_analyzer = self.analyzers.get('tempo')
+        if tempo_analyzer:
+            # CORRECTED: For more forgiving (beginner), widen tempo range
+            optimal_range = self.config.tempo_optimal_max - self.config.tempo_optimal_min
+            range_adjustment = optimal_range * (multiplier - 1) * 0.2
+            tempo_analyzer.OPTIMAL_MIN = self.config.tempo_optimal_min - range_adjustment
+            tempo_analyzer.OPTIMAL_MAX = self.config.tempo_optimal_max + range_adjustment
     
 
     def _validate_input_contracts(self, frame_metrics: List[BiomechanicalMetrics]) -> Dict[str, Any]:
@@ -1863,12 +1972,12 @@ class IntelligentFormGrader:
         skill_level = self.user_profile.skill_level if self.user_profile else UserLevel.BEGINNER
         
         if skill_level == UserLevel.BEGINNER:
-            # Beginners: Focus heavily on safety and basic movement patterns
+            # Beginners: Focus on fundamental movement patterns
             return {
-                'safety': 0.50,       # Dominant focus on safe movement
-                'depth': 0.30,        # Basic depth achievement
-                'stability': 0.20,    # Basic balance
-                'tempo': 0.0,         # Not evaluated yet
+                'safety': 0.25,       # Important but not overwhelming for beginners
+                'depth': 0.40,        # Primary focus on learning basic depth
+                'stability': 0.30,    # Basic balance development
+                'tempo': 0.05,        # Minimal tempo awareness
                 'symmetry': 0.0,      # Not evaluated yet
                 'butt_wink': 0.0,     # Too advanced
                 'knee_valgus': 0.0,   # Too advanced
@@ -1877,45 +1986,45 @@ class IntelligentFormGrader:
             }
         
         elif skill_level == UserLevel.INTERMEDIATE:
-            # Intermediate: Balanced approach with tempo introduction
+            # Intermediate: Balanced approach with more components introduced
             return {
-                'safety': 0.35,       # Still important but reduced
+                'safety': 0.30,       # Moderate safety focus
                 'depth': 0.25,        # Consistent depth expected
                 'stability': 0.20,    # Good stability expected
                 'tempo': 0.15,        # Tempo control introduced
-                'symmetry': 0.05,     # Basic symmetry awareness
-                'butt_wink': 0.0,     # Not yet evaluated
+                'symmetry': 0.08,     # Basic symmetry awareness
+                'butt_wink': 0.02,    # Basic spinal awareness introduction
                 'knee_valgus': 0.0,   # Not yet evaluated
                 'head_position': 0.0, # Not yet evaluated
                 'foot_stability': 0.0 # Not yet evaluated
             }
         
         elif skill_level == UserLevel.ADVANCED:
-            # Advanced: Full biomechanical analysis with fine details
+            # Advanced: Full biomechanical analysis with comprehensive detail
             return {
-                'safety': 0.25,       # Expected to be safe
-                'depth': 0.20,        # Expected to hit depth
-                'stability': 0.15,    # Expected to be stable
-                'tempo': 0.15,        # Good tempo control expected
+                'safety': 0.35,       # Strong safety focus
+                'depth': 0.20,        # Expected to hit depth consistently
+                'stability': 0.15,    # Good stability expected
+                'tempo': 0.12,        # Good tempo control expected
                 'symmetry': 0.10,     # Symmetry becomes important
-                'butt_wink': 0.05,    # Advanced pattern awareness
-                'knee_valgus': 0.05,  # Advanced pattern awareness
-                'head_position': 0.03, # Fine motor control
-                'foot_stability': 0.02 # Fine stability control
+                'butt_wink': 0.04,    # Advanced pattern awareness
+                'knee_valgus': 0.02,  # Advanced pattern awareness
+                'head_position': 0.01, # Fine motor control development
+                'foot_stability': 0.01 # Fine stability control
             }
         
         elif skill_level == UserLevel.EXPERT:
-            # Expert: Comprehensive analysis of all movement patterns
+            # Expert: Comprehensive analysis with MAXIMUM safety emphasis
             return {
-                'safety': 0.20,       # Safety assumed, deductions for violations
-                'depth': 0.15,        # Precision in depth control
-                'stability': 0.15,    # Advanced stability patterns
-                'tempo': 0.15,        # Precise tempo control
-                'symmetry': 0.15,     # High symmetry standards
-                'butt_wink': 0.08,    # Detailed spinal mechanics
-                'knee_valgus': 0.07,  # Detailed knee tracking
-                'head_position': 0.03, # Complete motor control
-                'foot_stability': 0.02 # Complete stability control
+                'safety': 0.45,       # Maximum safety standards - highest priority
+                'depth': 0.20,        # Consistent depth precision expected
+                'stability': 0.12,    # Advanced stability control
+                'tempo': 0.08,        # Precise tempo control
+                'symmetry': 0.07,     # Bilateral balance critical
+                'butt_wink': 0.04,    # Advanced spinal mechanics monitoring
+                'knee_valgus': 0.02,  # Advanced knee tracking
+                'head_position': 0.01, # Fine motor control
+                'foot_stability': 0.01 # Foundation stability
             }
         
         else:
@@ -2079,7 +2188,15 @@ class IntelligentFormGrader:
             'component_scores': component_scores,
             'analysis_details': analysis_details,
             'scoring_method': 'balanced_multi_component_with_hierarchy',
-            'phase_durations': {'total': len(frame_metrics) / 30.0}
+            'phase_durations': {'total': len(frame_metrics) / 30.0},
+            # Add difficulty tracking data for CSV logging
+            'difficulty_data': {
+                'difficulty_level': self.difficulty,
+                'skill_level': self.skill_level,
+                'threshold_multiplier': self.difficulty_thresholds.get(self.difficulty, 1.0),
+                'component_weights': self.component_weights,
+                'active_analyzers': list(self.component_weights.keys())
+            }
         }
         
         # Add enhanced feedback to result if available
