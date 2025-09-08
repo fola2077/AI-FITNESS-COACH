@@ -167,6 +167,16 @@ class PoseDetector:
                 landmarks[RIGHT_HIP], landmarks[RIGHT_KNEE], landmarks[RIGHT_ANKLE]
             )
             
+            # Add average knee angle for rep counter compatibility
+            if angles['knee_left'] > 0 and angles['knee_right'] > 0:
+                angles['knee'] = (angles['knee_left'] + angles['knee_right']) / 2
+            elif angles['knee_left'] > 0:
+                angles['knee'] = angles['knee_left']
+            elif angles['knee_right'] > 0:
+                angles['knee'] = angles['knee_right']
+            else:
+                angles['knee'] = 0
+            
             # Hip angle (average of left and right)
             left_hip_angle = self.calculate_angle(
                 landmarks[LEFT_SHOULDER], landmarks[LEFT_HIP], landmarks[LEFT_KNEE]

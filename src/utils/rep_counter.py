@@ -82,7 +82,6 @@ class RepCounter:
         """
         # Get primary angle for phase detection (knee for squats)
         primary_angle = angles.get('knee', angles.get('left_knee', angles.get('knee_left', 180.0)))
-        # print(f"[DEBUG] RepCounter.update: angles={angles}, primary_angle={primary_angle}, current_phase={self.current_phase}")
         
         # Update minimum angle for this rep
         if self.current_phase != MovementPhase.STANDING:
@@ -93,6 +92,7 @@ class RepCounter:
         phase_changed = new_phase != self.current_phase
         
         if phase_changed:
+            print(f"� Phase: {self.current_phase.value} → {new_phase.value} (angle: {primary_angle:.1f}°)")
             self._handle_phase_transition(new_phase)
         
         # Check for rep completion
@@ -103,8 +103,10 @@ class RepCounter:
             # Validate the rep
             if self.hit_bottom_this_rep:
                 self.rep_count += 1
+                print(f"🎉 REP {self.rep_count} COMPLETED! (min depth: {self.min_knee_angle_this_rep:.1f}°)")
             else:
                 rep_failed = True
+                print(f"❌ Rep failed - didn't hit bottom (min_angle: {self.min_knee_angle_this_rep:.1f}°)")
             
             # Reset for next rep
             self._reset_rep_tracking()
@@ -159,9 +161,11 @@ class RepCounter:
     
     def _check_rep_completion(self, current_phase: MovementPhase) -> bool:
         """Check if a repetition has been completed"""
-        # Rep is complete when returning to standing from ascent
-        return (self.previous_phase == MovementPhase.ASCENT and 
-                current_phase == MovementPhase.STANDING)
+        # Rep is complete when returning to standing after hitting bottom
+        # This handles cases where we might skip the ascent phase due to fast transitions
+        return (current_phase == MovementPhase.STANDING and 
+                self.hit_bottom_this_rep and
+                self.previous_phase in [MovementPhase.ASCENT, MovementPhase.BOTTOM])
     
     def _reset_rep_tracking(self):
         """Reset tracking variables for the next repetition"""

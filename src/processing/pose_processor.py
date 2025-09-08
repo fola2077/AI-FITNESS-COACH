@@ -5,7 +5,7 @@ import math
 from collections import deque
 from src.pose.pose_detector import PoseDetector
 from src.utils.math_utils import joint_angle
-from src.feedback.feedback_manager import FeedbackManager
+from src.feedback.enhanced_feedback_manager import EnhancedFeedbackManager
 from src.grading.advanced_form_grader import (
     IntelligentFormGrader,
     UserProfile,
@@ -29,7 +29,9 @@ class SessionState(Enum):
 class PoseProcessor:
     def __init__(self, user_profile: UserProfile = None, threshold_config: ThresholdConfig = None, enable_validation: bool = False):
         self.pose_detector = PoseDetector()
-        self.feedback_manager = FeedbackManager()
+        # Initialize enhanced feedback manager with voice support
+        skill_level = user_profile.skill_level.value if user_profile else "intermediate"
+        self.feedback_manager = EnhancedFeedbackManager(voice_enabled=True, user_skill_level=skill_level)
         self.session_manager = SessionManager()
         self.rep_counter = RepCounter(exercise_type="squat")
         
@@ -202,6 +204,16 @@ class PoseProcessor:
             try:
                 self.data_logger.log_rep_start(expected_rep_number)
                 print(f"✅ Rep {expected_rep_number} started")
+                
+                # VOICE FEEDBACK: Announce rep start
+                print(f"🔊 Providing voice feedback for rep {expected_rep_number} start")
+                self.feedback_manager.add_intelligent_feedback(
+                    fault_type='ENCOURAGEMENT',
+                    severity='rep_start',
+                    rep_count=expected_rep_number,
+                    force_voice=True
+                )
+                
             except Exception as e:
                 print(f"❌ Error starting rep logging: {e}")
         
@@ -292,6 +304,33 @@ class PoseProcessor:
             # Add timestamp for UI tracking
             self.last_rep_analysis['timestamp'] = time.time()
             
+            # VOICE FEEDBACK: Process rep completion with voice feedback
+            rep_count = self.rep_counter.rep_count
+            overall_score = self.last_rep_analysis.get('score', 0)
+            faults = self.last_rep_analysis.get('faults', [])
+            
+            print(f"🔊 Providing voice feedback for rep {rep_count} completion (score: {overall_score})")
+            
+            # Announce rep completion with encouraging voice
+            self.feedback_manager.add_intelligent_feedback(
+                fault_type='ENCOURAGEMENT',
+                severity='completion',
+                rep_count=rep_count,
+                form_score=overall_score,
+                force_voice=True
+            )
+            
+            # Process faults with voice feedback
+            if faults:
+                for fault in faults[:2]:  # Limit to 2 most important faults to avoid overwhelming
+                    self.feedback_manager.add_intelligent_feedback(
+                        fault_type=fault,
+                        severity='moderate',
+                        rep_count=rep_count,
+                        form_score=overall_score,
+                        force_voice=True
+                    )
+            
             # Log rep completion to CSV - map form grader output to session logger format
             component_scores = self.last_rep_analysis.get('component_scores', {})
             
@@ -369,8 +408,13 @@ class PoseProcessor:
         if len(self.stability_buffer) == self.stability_buffer.maxlen:
             x_var = np.var([pos[0] for pos in self.stability_buffer])
             y_var = np.var([pos[1] for pos in self.stability_buffer])
-            if x_var < 0.0001 and y_var < 0.0001:
+            print(f"🔍 DEBUG - Stability check: x_var={x_var:.6f}, y_var={y_var:.6f}")
+            # Relaxed thresholds for real-world stability (10x more lenient)
+            if x_var < 0.001 and y_var < 0.001:
                 is_stable = True
+                print(f"🔍 DEBUG - STABLE frame detected!")
+            else:
+                print(f"🔍 DEBUG - Not stable (thresholds: x<0.001, y<0.001)")
         
         if is_stable:
             self.calibration_frames += 1
