@@ -36,13 +36,12 @@ class DataLogCleaner:
             "data/logs/reps/*.csv", 
             "data/logs/biomechanics/*.csv",
             "data/logs/ml_training/*.csv",
-            "data/logs/evaluation/**/*.csv"
+            "data/logs/evaluation/*.csv"
         ]
         
         self.report_patterns = [
             "data/logs/session_report_*.txt",
-            "data/logs/data_summary_report_*.json",
-            "data/logs/evaluation/**/*.json"
+            "data/logs/data_summary_report_*.json"
         ]
         
         # Files/patterns to preserve (unless --all specified)

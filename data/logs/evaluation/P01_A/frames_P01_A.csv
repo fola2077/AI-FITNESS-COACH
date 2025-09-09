@@ -1,6 +1,0 @@
-timestamp_ms,frame_id,pose_confidence,fps,knee_left_deg,knee_right_deg,knee_avg_deg,trunk_angle_deg,hip_angle_deg,ankle_angle_deg,movement_phase,valgus_deviation_deg,depth_achieved,trunk_flex_excessive,landmarks_visible_count
-1757411827013,0,0.95,30,150,150,150.0,5,0,0,standing,0,0,0,33
-1757411827013,1,0.95,30,140,140,140.0,5,0,0,standing,0,0,0,33
-1757411827013,2,0.95,30,130,130,130.0,5,0,0,standing,0,0,0,33
-1757411827013,3,0.95,30,120,120,120.0,5,0,0,DESCENT,0,0,0,33
-1757411827013,4,0.95,30,110,110,110.0,5,0,0,DESCENT,0,0,0,33

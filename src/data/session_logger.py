@@ -1705,98 +1705,72 @@ class DataLogger:
     
     def start_evaluation_session(self, user_name: str) -> str:
         """
-        Start an evaluation session for dissertation research.
-        
+        Start evaluation data logging session using same pattern as other logs
         Args:
-            user_name: Combined participant and condition (e.g., 'P01_A', 'P02_B')
-            
+            user_name: User identifier (e.g., "P01_A", "P02_B", "john_doe")
         Returns:
-            evaluation_session_id: Unique identifier for this evaluation session
+            str: Evaluation session ID
         """
         if not user_name:
             raise ValueError("User name is required for evaluation session")
         
-        # Parse participant and condition from user_name (e.g., "P01_A" -> "P01", "A")
-        if '_' in user_name:
-            participant_id, condition = user_name.split('_', 1)
-        else:
-            # Fallback if no underscore
-            participant_id = user_name
-            condition = "A"
-        
-        # Create evaluation subdirectory using user_name
-        eval_dir = os.path.join(self.config.base_output_dir, "evaluation", user_name)
-        Path(eval_dir).mkdir(parents=True, exist_ok=True)
-        
-        # Start regular session and get session ID
-        session_id = self.start_session(user_id=user_name)
-        
-        # Create evaluation-specific session ID
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        eval_session_id = f"{user_name}_{timestamp}"
-        
-        # Store evaluation context
         self._evaluation_context = {
             'user_name': user_name,
-            'participant_id': participant_id,
-            'condition': condition,
-            'eval_session_id': eval_session_id,
-            'eval_dir': eval_dir,
-            'regular_session_id': session_id,
-            'start_timestamp': time.time(),
-            'frame_counter': 0,
-            'rep_counter': 0,
-            'cue_counter': 0
+            'session_id': f"eval_{user_name}_{int(time.time())}",
+            'start_time': time.time(),
+            'frame_count': 0,
+            'rep_count': 0,
+            'cue_count': 0
         }
         
-        # Initialize CSV files for evaluation
-        self._init_evaluation_csvs()
+        # Create evaluation directory (same as other log directories)
+        eval_dir = os.path.join(self.config.base_output_dir, "evaluation")
+        Path(eval_dir).mkdir(parents=True, exist_ok=True)
         
-        print(f"🎯 Evaluation session started:")
-        print(f"   User: {user_name}")
-        print(f"   Participant: {participant_id}, Condition: {condition}")
-        print(f"   Session ID: {eval_session_id}")
-        print(f"   Output: {eval_dir}")
+        # Initialize CSV files in flat structure (same as other logs)
+        self._init_evaluation_files(eval_dir)
         
-        return eval_session_id
+        print(f"🎯 Evaluation session started for {user_name}")
+        return self._evaluation_context['session_id']
     
-    def _init_evaluation_csvs(self):
-        """Initialize CSV files for evaluation data collection"""
-        eval_dir = self._evaluation_context['eval_dir']
-        user_name = self._evaluation_context['user_name']
+    def _init_evaluation_files(self, eval_dir):
+        """Initialize evaluation CSV files using same flat structure as other logs"""
         
-        # Frame-level CSV
-        self._eval_frame_csv = os.path.join(eval_dir, f"frames_{user_name}.csv")
+        # Frame-level data - append to single file (like biomechanics.csv)
+        self._eval_frame_csv = os.path.join(eval_dir, "evaluation_frames.csv")
         self._eval_frame_headers = [
-            'timestamp_ms', 'frame_id', 'pose_confidence', 'fps',
+            'user_name', 'timestamp_ms', 'frame_id', 'pose_confidence', 'fps',
             'knee_left_deg', 'knee_right_deg', 'knee_avg_deg',
             'trunk_angle_deg', 'hip_angle_deg', 'ankle_angle_deg',
             'movement_phase', 'valgus_deviation_deg', 'depth_achieved',
             'trunk_flex_excessive', 'landmarks_visible_count'
         ]
         
-        # Rep-level CSV
-        self._eval_rep_csv = os.path.join(eval_dir, f"reps_{user_name}.csv")
+        # Rep-level data - append to single file (like reps.csv)
+        self._eval_rep_csv = os.path.join(eval_dir, "evaluation_reps.csv")
         self._eval_rep_headers = [
-            'rep_id', 'start_timestamp_ms', 'bottom_timestamp_ms', 'end_timestamp_ms',
+            'user_name', 'rep_id', 'start_timestamp_ms', 'bottom_timestamp_ms', 'end_timestamp_ms',
             'duration_ms', 'min_knee_angle_deg', 'max_trunk_flex_deg', 'max_valgus_dev_deg',
             'depth_fault_flag', 'valgus_fault_flag', 'trunk_fault_flag', 'form_score_percent',
             'stability_index_knee', 'stability_index_trunk', 'aot_valgus_ms_deg',
             'aot_trunk_ms_deg', 'ai_rep_detected'
         ]
         
-        # Cue-level CSV
-        self._eval_cue_csv = os.path.join(eval_dir, f"cues_{user_name}.csv")
+        # Cue-level data - append to single file (like sessions.csv)
+        self._eval_cue_csv = os.path.join(eval_dir, "evaluation_cues.csv")
         self._eval_cue_headers = [
-            'cue_timestamp_ms', 'rep_id', 'cue_type', 'cue_message',
+            'user_name', 'cue_timestamp_ms', 'rep_id', 'cue_type', 'cue_message',
             'movement_phase_at_cue', 'in_actionable_window', 'reaction_detected',
             'reaction_latency_ms', 'correction_magnitude_deg'
         ]
         
-        # Write headers
-        self._write_csv_headers(self._eval_frame_csv, self._eval_frame_headers)
-        self._write_csv_headers(self._eval_rep_csv, self._eval_rep_headers)
-        self._write_csv_headers(self._eval_cue_csv, self._eval_cue_headers)
+        # Write headers if files don't exist (same pattern as other logs)
+        if not os.path.exists(self._eval_frame_csv):
+            self._write_csv_headers(self._eval_frame_csv, self._eval_frame_headers)
+        if not os.path.exists(self._eval_rep_csv):
+            self._write_csv_headers(self._eval_rep_csv, self._eval_rep_headers)
+        if not os.path.exists(self._eval_cue_csv):
+            self._write_csv_headers(self._eval_cue_csv, self._eval_cue_headers)
     
     def log_evaluation_frame(self, frame_data: Dict[str, Any]):
         """Log frame-level data for evaluation analysis"""
@@ -1804,11 +1778,12 @@ class DataLogger:
             return
             
         timestamp_ms = int(time.time() * 1000)
-        frame_id = self._evaluation_context['frame_counter']
-        self._evaluation_context['frame_counter'] += 1
+        frame_id = self._evaluation_context['frame_count']
+        self._evaluation_context['frame_count'] += 1
         
-        # Extract or default frame data
+        # Build row with user_name first (same pattern as other logs)
         row = [
+            self._evaluation_context['user_name'],  # Same pattern as other logs
             timestamp_ms,
             frame_id,
             frame_data.get('pose_confidence', 0.0),
@@ -1826,6 +1801,7 @@ class DataLogger:
             frame_data.get('landmarks_visible_count', 33)
         ]
         
+        # Append to single file (same as other logs)
         self._append_csv_row(self._eval_frame_csv, row)
     
     def log_evaluation_rep(self, rep_data: Dict[str, Any]):
@@ -1833,11 +1809,12 @@ class DataLogger:
         if not hasattr(self, '_evaluation_context'):
             return
             
-        rep_id = self._evaluation_context['rep_counter'] + 1
-        self._evaluation_context['rep_counter'] = rep_id
+        rep_id = self._evaluation_context['rep_count'] + 1
+        self._evaluation_context['rep_count'] = rep_id
         
-        # Extract or default rep data
+        # Build row with user_name first (same pattern as other logs)
         row = [
+            self._evaluation_context['user_name'],  # Same pattern as other logs
             rep_id,
             rep_data.get('start_timestamp_ms', int(time.time() * 1000)),
             rep_data.get('bottom_timestamp_ms', int(time.time() * 1000)),
@@ -1857,6 +1834,7 @@ class DataLogger:
             rep_data.get('ai_rep_detected', 1)
         ]
         
+        # Append to single file (same as other logs)
         self._append_csv_row(self._eval_rep_csv, row)
         return rep_id
     
@@ -1865,13 +1843,14 @@ class DataLogger:
         if not hasattr(self, '_evaluation_context'):
             return
             
-        cue_id = self._evaluation_context['cue_counter'] + 1
-        self._evaluation_context['cue_counter'] = cue_id
+        cue_id = self._evaluation_context['cue_count'] + 1
+        self._evaluation_context['cue_count'] = cue_id
         
-        # Extract or default cue data
+        # Build row with user_name first (same pattern as other logs)
         row = [
+            self._evaluation_context['user_name'],  # Same pattern as other logs
             cue_data.get('cue_timestamp_ms', int(time.time() * 1000)),
-            cue_data.get('rep_id', self._evaluation_context['rep_counter']),
+            cue_data.get('rep_id', self._evaluation_context['rep_count']),
             cue_data.get('cue_type', 'general'),
             cue_data.get('cue_message', 'Feedback given'),
             cue_data.get('movement_phase_at_cue', 'DESCENT'),
@@ -1881,6 +1860,7 @@ class DataLogger:
             cue_data.get('correction_magnitude_deg', 0)
         ]
         
+        # Append to single file (same as other logs)
         self._append_csv_row(self._eval_cue_csv, row)
         return cue_id
     
@@ -1889,36 +1869,22 @@ class DataLogger:
         if not hasattr(self, '_evaluation_context'):
             return
             
-        # Create metadata file
-        eval_dir = self._evaluation_context['eval_dir']
-        user_name = self._evaluation_context['user_name']
-        metadata_file = os.path.join(eval_dir, f"metadata_{user_name}.json")
-        
+        # Create simple metadata summary
         metadata = {
-            'user_name': user_name,
-            'participant_id': self._evaluation_context['participant_id'],
-            'condition': self._evaluation_context['condition'],
-            'session_start': self._evaluation_context['start_timestamp'],
+            'user_name': self._evaluation_context['user_name'],
+            'session_start': self._evaluation_context['start_time'],
             'session_end': time.time(),
-            'duration_seconds': time.time() - self._evaluation_context['start_timestamp'],
-            'total_frames': self._evaluation_context['frame_counter'],
-            'total_reps': self._evaluation_context['rep_counter'],
-            'total_cues': self._evaluation_context['cue_counter'],
-            'thresholds': {
-                'depth_knee_angle_deg': 100,
-                'valgus_deviation_deg': 10,
-                'trunk_flex_deg': 40,
-                'pose_confidence_min': 0.5
-            }
+            'duration_seconds': time.time() - self._evaluation_context['start_time'],
+            'total_frames': self._evaluation_context['frame_count'],
+            'total_reps': self._evaluation_context['rep_count'],
+            'total_cues': self._evaluation_context['cue_count']
         }
         
-        with open(metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=2)
-        
         print(f"✅ Evaluation session finalized:")
-        print(f"   Frames logged: {self._evaluation_context['frame_counter']}")
-        print(f"   Reps logged: {self._evaluation_context['rep_counter']}")
-        print(f"   Cues logged: {self._evaluation_context['cue_counter']}")
+        print(f"   User: {self._evaluation_context['user_name']}")
+        print(f"   Frames logged: {self._evaluation_context['frame_count']}")
+        print(f"   Reps logged: {self._evaluation_context['rep_count']}")
+        print(f"   Cues logged: {self._evaluation_context['cue_count']}")
         print(f"   Duration: {metadata['duration_seconds']:.1f}s")
         
         # Clean up evaluation context

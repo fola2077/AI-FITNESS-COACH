@@ -80,6 +80,9 @@ class PoseProcessor:
         self._last_phase = None  # For rep transition detection
         self._last_voice_heartbeat = 0.0  # Voice heartbeat timer
         self._voice_debug_enabled = True
+        # Initialize evaluation tracking variables
+        self._last_rep_count = 0
+        self._evaluation_active = False
 
     def _voice_debug(self, message: str):
         """Prints a standardized voice debug message."""
@@ -305,7 +308,7 @@ class PoseProcessor:
                         'valgus_deviation': getattr(current_metric, 'knee_valgus_angle', 0),
                         'depth_percentage': getattr(current_metric, 'depth_percentage', 0)
                     }
-                    self._log_evaluation_data_if_active(eval_metrics, landmarks)
+                    self._log_evaluation_data_if_active(eval_metrics, self.pose_detector.results)
                 except Exception as e:
                     print(f"❌ Error logging evaluation data: {e}")
 
@@ -409,6 +412,9 @@ class PoseProcessor:
                         form_score=overall_score,
                         force_voice=True
                     )
+                    
+                    # Log cue data for evaluation if active
+                    self._log_cue_if_evaluation_active(fault, rep_count, 'ASCENT')  # Feedback typically given after rep
             
             # Log rep completion to CSV - map form grader output to session logger format
             component_scores = self.last_rep_analysis.get('component_scores', {})
@@ -509,6 +515,27 @@ class PoseProcessor:
         else:
             feedback = [f"Hold steady... {int(progress * 100)}%" if is_stable else "Please stand still."]
 
+        # Log evaluation data during calibration if active
+        if hasattr(self, '_evaluation_active') and self._evaluation_active:
+            try:
+                angles = self.pose_detector.calculate_angles(landmarks)
+                eval_metrics = {
+                    'rep_count': 0,
+                    'phase': 'CALIBRATING',
+                    'form_score': 85,  # Default for calibration
+                    'knee_angle_left': angles.get('knee_left', 180),
+                    'knee_angle_right': angles.get('knee_right', 180),
+                    'knee_angle_avg': (angles.get('knee_left', 180) + angles.get('knee_right', 180)) / 2,
+                    'back_angle': angles.get('back', 0),
+                    'hip_angle': angles.get('hip', 180),
+                    'ankle_angle_avg': (angles.get('ankle_left', 90) + angles.get('ankle_right', 90)) / 2,
+                    'valgus_deviation': 0,  # Assume no valgus during calibration
+                    'depth_percentage': 0  # No depth during calibration
+                }
+                self._log_evaluation_data_if_active(eval_metrics, self.pose_detector.results)
+            except Exception as e:
+                print(f"❌ Error logging calibration evaluation data: {e}")
+
         return {
             'rep_count': 0, 'phase': 'CALIBRATING', 'fps': self.fps,
             'session_state': self.session_state.value, 'landmarks_detected': True,
@@ -562,14 +589,25 @@ class PoseProcessor:
             return metadata
         return None
     
-    def _log_evaluation_data_if_active(self, metrics: dict, landmarks):
+    def _log_evaluation_data_if_active(self, metrics: dict, pose_results):
         """Automatically log evaluation data if evaluation session is active"""
         if not hasattr(self, '_evaluation_active') or not self._evaluation_active:
             return
             
+        # Extract pose confidence from MediaPipe results
+        pose_confidence = 0.0
+        landmarks_count = 0
+        
+        if pose_results and hasattr(pose_results, 'pose_landmarks') and pose_results.pose_landmarks:
+            # Calculate average landmark visibility as confidence
+            landmarks = pose_results.pose_landmarks.landmark
+            visible_landmarks = [lm for lm in landmarks if lm.visibility > 0.5]
+            pose_confidence = len(visible_landmarks) / len(landmarks) if landmarks else 0.0
+            landmarks_count = len(landmarks)
+        
         # Log frame-level data
         frame_data = {
-            'pose_confidence': landmarks.get('pose_confidence', 0.0) if landmarks else 0.0,
+            'pose_confidence': pose_confidence,
             'fps': self.fps,
             'knee_left_deg': metrics.get('knee_angle_left', 0),
             'knee_right_deg': metrics.get('knee_angle_right', 0),
@@ -581,7 +619,7 @@ class PoseProcessor:
             'valgus_deviation_deg': metrics.get('valgus_deviation', 0),
             'depth_achieved': 1 if metrics.get('depth_percentage', 0) > 0.8 else 0,
             'trunk_flex_excessive': 1 if metrics.get('back_angle', 0) > 40 else 0,
-            'landmarks_visible_count': len(landmarks) if landmarks else 0
+            'landmarks_visible_count': landmarks_count
         }
         
         self.data_logger.log_evaluation_frame(frame_data)
@@ -611,20 +649,26 @@ class PoseProcessor:
         
         # Update rep count tracking
         self._last_rep_count = metrics.get('rep_count', 0)
+    
+    def _log_cue_if_evaluation_active(self, cue_type: str, rep_id: int, movement_phase: str):
+        """Log cue/feedback data if evaluation session is active"""
+        if not hasattr(self, '_evaluation_active') or not self._evaluation_active:
+            return
+            
+        cue_data = {
+            'cue_timestamp_ms': int(time.time() * 1000),
+            'rep_id': rep_id,
+            'cue_type': cue_type.lower() if isinstance(cue_type, str) else 'general',
+            'cue_message': f"Feedback for {cue_type}" if isinstance(cue_type, str) else 'General feedback',
+            'movement_phase_at_cue': movement_phase,
+            'in_actionable_window': 1,  # Assume feedback is actionable
+            'reaction_detected': 0,  # Would need additional tracking for this
+            'reaction_latency_ms': 0,  # Would need additional tracking for this
+            'correction_magnitude_deg': 0  # Would need additional tracking for this
+        }
         
-        # Log feedback/cues when given
-        if hasattr(self, '_last_feedback_time'):
-            # Check if new feedback was given (you'd need to track this in your feedback system)
-            current_time = time.time()
-            if hasattr(self, '_new_feedback_given') and self._new_feedback_given:
-                cue_data = {
-                    'cue_timestamp_ms': int(current_time * 1000),
-                    'rep_id': self._last_rep_count + 1,  # Current rep in progress
-                    'cue_type': getattr(self, '_last_cue_type', 'general'),
-                    'cue_message': getattr(self, '_last_cue_message', 'Feedback given'),
-                    'movement_phase_at_cue': metrics.get('phase', 'DESCENT'),
-                    'in_actionable_window': 1
-                }
-                
-                cue_id = self.data_logger.log_evaluation_cue(cue_data)
-                self._new_feedback_given = False  # Reset flag
+        try:
+            cue_id = self.data_logger.log_evaluation_cue(cue_data)
+            print(f"📊 Evaluation cue logged: {cue_id} - {cue_type}")
+        except Exception as e:
+            print(f"❌ Error logging evaluation cue: {e}")
