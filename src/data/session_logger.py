@@ -77,6 +77,10 @@ class DataLogger:
         self.session_data_buffer = []
         self.rep_data_buffer = []
         self.frame_data_buffer = []
+        # NEW: Add buffers for automatic evaluation logging
+        self.eval_frame_buffer = []
+        self.eval_rep_buffer = []
+        self.eval_cue_buffer = []
         
         # Initialize directories
         self._setup_directories()
@@ -103,6 +107,8 @@ class DataLogger:
             os.path.join(self.config.base_output_dir, self.config.rep_logs_dir),
             os.path.join(self.config.base_output_dir, self.config.biomech_logs_dir),
             os.path.join(self.config.base_output_dir, self.config.ml_training_dir),
+            # NEW: Automatically create the evaluation directory
+            os.path.join(self.config.base_output_dir, "evaluation"),
         ]
         
         for directory in directories:
@@ -158,6 +164,29 @@ class DataLogger:
             'difficulty_level', 'threshold_multiplier_active'
         ]
         
+        # NEW: Define evaluation schemas
+        self.eval_frame_schema = [
+            'user_name', 'timestamp_ms', 'frame_id', 'pose_confidence', 'fps',
+            'knee_left_deg', 'knee_right_deg', 'knee_avg_deg',
+            'trunk_angle_deg', 'hip_angle_deg', 'ankle_angle_deg',
+            'movement_phase', 'valgus_deviation_deg', 'depth_achieved',
+            'trunk_flex_excessive', 'landmarks_visible_count'
+        ]
+        
+        self.eval_rep_schema = [
+            'user_name', 'rep_id', 'start_timestamp_ms', 'bottom_timestamp_ms', 'end_timestamp_ms',
+            'duration_ms', 'min_knee_angle_deg', 'max_trunk_flex_deg', 'max_valgus_dev_deg',
+            'depth_fault_flag', 'valgus_fault_flag', 'trunk_fault_flag', 'form_score_percent',
+            'stability_index_knee', 'stability_index_trunk', 'aot_valgus_ms_deg',
+            'aot_trunk_ms_deg', 'ai_rep_detected'
+        ]
+
+        self.eval_cue_schema = [
+            'user_name', 'cue_timestamp_ms', 'rep_id', 'cue_type', 'cue_message',
+            'movement_phase_at_cue', 'in_actionable_window', 'reaction_detected',
+            'reaction_latency_ms', 'correction_magnitude_deg'
+        ]
+
         # ML training dataset schema (comprehensive)
         self.ml_schema = [
             # Identifiers
@@ -211,6 +240,10 @@ class DataLogger:
         self.session_data_buffer = [session_info]
         self.rep_data_buffer = []
         self.frame_data_buffer = []
+        # NEW: Reset evaluation buffers
+        self.eval_frame_buffer = []
+        self.eval_rep_buffer = []
+        self.eval_cue_buffer = []
         
         print(f"📊 Data logging session started: {self.current_session_id}")
         return self.current_session_id
@@ -433,6 +466,8 @@ class DataLogger:
         self._write_rep_data()
         self._write_biomech_data()
         self._write_ml_training_data()
+        # NEW: Write evaluation data automatically
+        self._write_evaluation_data()
         
         # Generate summary report
         self._generate_session_report()
@@ -451,6 +486,10 @@ class DataLogger:
         self.session_data_buffer = []
         self.rep_data_buffer = []
         self.frame_data_buffer = []
+        # NEW: Reset evaluation buffers after session ends
+        self.eval_frame_buffer = []
+        self.eval_rep_buffer = []
+        self.eval_cue_buffer = []
     
     def _calculate_frame_quality(self, biomech_metrics) -> float:
         """Calculate quality score for a single frame"""
@@ -682,7 +721,27 @@ class DataLogger:
         # Fatigue detected if recent performance is significantly lower
         decline_threshold = 15  # 15 point decline indicates fatigue
         return (avg_early - avg_recent) > decline_threshold
-    
+
+    # NEW: Method to write all buffered evaluation data to files
+    def _write_evaluation_data(self):
+        """Write buffered evaluation data to their respective CSV files."""
+        eval_dir = os.path.join(self.config.base_output_dir, "evaluation")
+
+        # Write frame data
+        if self.eval_frame_buffer:
+            frame_file = os.path.join(eval_dir, f"evaluation_frames_{datetime.now().strftime('%Y%m')}.csv")
+            self._write_generic_data(frame_file, self.eval_frame_schema, self.eval_frame_buffer)
+
+        # Write rep data
+        if self.eval_rep_buffer:
+            rep_file = os.path.join(eval_dir, f"evaluation_reps_{datetime.now().strftime('%Y%m')}.csv")
+            self._write_generic_data(rep_file, self.eval_rep_schema, self.eval_rep_buffer)
+
+        # Write cue data
+        if self.eval_cue_buffer:
+            cue_file = os.path.join(eval_dir, f"evaluation_cues_{datetime.now().strftime('%Y%m')}.csv")
+            self._write_generic_data(cue_file, self.eval_cue_schema, self.eval_cue_buffer)
+
     def _extract_component_weight(self, form_analysis: Dict, component_name: str) -> float:
         """Extract weight for a specific component from form analysis"""
         component_scores = form_analysis.get('component_scores', {})
@@ -1903,3 +1962,51 @@ class DataLogger:
         with open(filepath, 'a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(row)
+
+    # ========================================
+    # AUTOMATIC EVALUATION LOGGING
+    # ========================================
+    
+    def log_evaluation_frame(self, frame_data: Dict[str, Any]):
+        """Log frame-level data for evaluation analysis by buffering it."""
+        if not self.current_session_id:
+            return
+        
+        user_name = self.session_data_buffer[0].get('user_id', 'unknown_user')
+        frame_data['user_name'] = user_name
+        self.eval_frame_buffer.append(frame_data)
+
+    def log_evaluation_rep(self, rep_data: Dict[str, Any]):
+        """Log rep-level data for evaluation analysis by buffering it."""
+        if not self.current_session_id:
+            return
+            
+        user_name = self.session_data_buffer[0].get('user_id', 'unknown_user')
+        rep_data['user_name'] = user_name
+        self.eval_rep_buffer.append(rep_data)
+
+    def log_evaluation_cue(self, cue_data: Dict[str, Any]):
+        """Log cue/feedback data for evaluation analysis by buffering it."""
+        if not self.current_session_id:
+            return
+
+        user_name = self.session_data_buffer[0].get('user_id', 'unknown_user')
+        cue_data['user_name'] = user_name
+        self.eval_cue_buffer.append(cue_data)
+
+    def _write_generic_data(self, filepath: str, schema: List[str], data_buffer: List[Dict]):
+        """Generic method to write data to CSV file"""
+        # Check if file exists, if not create with headers
+        file_exists = os.path.exists(filepath)
+        
+        with open(filepath, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            
+            # Write headers if file is new
+            if not file_exists:
+                writer.writerow(schema)
+            
+            # Write data rows
+            for record in data_buffer:
+                row = [record.get(field, '') for field in schema]
+                writer.writerow(row)

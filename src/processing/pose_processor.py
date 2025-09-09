@@ -290,27 +290,11 @@ class PoseProcessor:
                         frame_number=len(self.current_rep_metrics),
                         movement_phase=phase_str
                     )
+                    
+                    # NEW: Automatically log evaluation data during normal processing
+                    self._log_evaluation_data_automatically(current_metric, self.pose_detector.results, phase_str)
                 except Exception as e:
                     print(f"❌ Error logging frame data: {e}")
-                
-                # Log evaluation data if evaluation session is active
-                try:
-                    eval_metrics = {
-                        'rep_count': rep_state.rep_count,
-                        'phase': phase_str,
-                        'form_score': getattr(current_metric, 'form_score', 85),
-                        'knee_angle_left': angles.get('knee_left', 0),
-                        'knee_angle_right': angles.get('knee_right', 0),
-                        'knee_angle_avg': (angles.get('knee_left', 0) + angles.get('knee_right', 0)) / 2,
-                        'back_angle': angles.get('back', 0),
-                        'hip_angle': angles.get('hip', 0),
-                        'ankle_angle_avg': (angles.get('ankle_left', 0) + angles.get('ankle_right', 0)) / 2,
-                        'valgus_deviation': getattr(current_metric, 'knee_valgus_angle', 0),
-                        'depth_percentage': getattr(current_metric, 'depth_percentage', 0)
-                    }
-                    self._log_evaluation_data_if_active(eval_metrics, self.pose_detector.results)
-                except Exception as e:
-                    print(f"❌ Error logging evaluation data: {e}")
 
         # When a rep is completed, trigger the full analysis
         if rep_state.rep_completed:
@@ -413,8 +397,11 @@ class PoseProcessor:
                         force_voice=True
                     )
                     
-                    # Log cue data for evaluation if active
-                    self._log_cue_if_evaluation_active(fault, rep_count, 'ASCENT')  # Feedback typically given after rep
+                    # NEW: Automatically log evaluation cue data 
+                    self._log_evaluation_cue_automatically(fault, rep_count, 'ASCENT')
+            
+            # NEW: Automatically log evaluation rep data
+            self._log_evaluation_rep_automatically(self.last_rep_analysis, rep_count)
             
             # Log rep completion to CSV - map form grader output to session logger format
             component_scores = self.last_rep_analysis.get('component_scores', {})
@@ -554,44 +541,12 @@ class PoseProcessor:
         }
 
     # ========================================
-    # EVALUATION SESSION METHODS
+    # AUTOMATIC EVALUATION LOGGING METHODS
     # ========================================
     
-    def start_evaluation_session(self, user_name: str) -> str:
-        """
-        Start an evaluation session for dissertation research.
-        
-        Args:
-            user_name: Combined participant and condition (e.g., 'P01_A', 'P02_B')
-            
-        Returns:
-            evaluation_session_id: Unique identifier for this evaluation session
-        """
-        # Start evaluation session in data logger
-        eval_session_id = self.data_logger.start_evaluation_session(user_name)
-        
-        # Start regular session 
-        self.start_session()
-        
-        # Store evaluation context in processor
-        self._evaluation_active = True
-        self._evaluation_user_name = user_name
-        
-        print(f"🎯 PoseProcessor evaluation mode activated for {user_name}")
-        return eval_session_id
-    
-    def finalize_evaluation_session(self):
-        """Finalize the evaluation session"""
-        if hasattr(self, '_evaluation_active') and self._evaluation_active:
-            metadata = self.data_logger.finalize_evaluation_session()
-            self._evaluation_active = False
-            print("🎯 PoseProcessor evaluation session completed")
-            return metadata
-        return None
-    
-    def _log_evaluation_data_if_active(self, metrics: dict, pose_results):
-        """Automatically log evaluation data if evaluation session is active"""
-        if not hasattr(self, '_evaluation_active') or not self._evaluation_active:
+    def _log_evaluation_data_automatically(self, biomech_metrics, pose_results, movement_phase):
+        """Automatically log evaluation data during normal frame processing"""
+        if not self.data_logger:
             return
             
         # Extract pose confidence from MediaPipe results
@@ -599,76 +554,74 @@ class PoseProcessor:
         landmarks_count = 0
         
         if pose_results and hasattr(pose_results, 'pose_landmarks') and pose_results.pose_landmarks:
-            # Calculate average landmark visibility as confidence
             landmarks = pose_results.pose_landmarks.landmark
             visible_landmarks = [lm for lm in landmarks if lm.visibility > 0.5]
             pose_confidence = len(visible_landmarks) / len(landmarks) if landmarks else 0.0
             landmarks_count = len(landmarks)
-        
-        # Log frame-level data
+
+        # Log frame-level evaluation data
         frame_data = {
+            'timestamp_ms': int(time.time() * 1000),
+            'frame_id': self.frame_counter,
             'pose_confidence': pose_confidence,
             'fps': self.fps,
-            'knee_left_deg': metrics.get('knee_angle_left', 0),
-            'knee_right_deg': metrics.get('knee_angle_right', 0),
-            'knee_avg_deg': metrics.get('knee_angle_avg', 0.0),
-            'trunk_angle_deg': metrics.get('back_angle', 0),
-            'hip_angle_deg': metrics.get('hip_angle', 0),
-            'ankle_angle_deg': metrics.get('ankle_angle_avg', 0),
-            'movement_phase': metrics.get('phase', 'standing'),
-            'valgus_deviation_deg': metrics.get('valgus_deviation', 0),
-            'depth_achieved': 1 if metrics.get('depth_percentage', 0) > 0.8 else 0,
-            'trunk_flex_excessive': 1 if metrics.get('back_angle', 0) > 40 else 0,
+            'knee_left_deg': biomech_metrics.knee_angle_left,
+            'knee_right_deg': biomech_metrics.knee_angle_right,
+            'knee_avg_deg': (biomech_metrics.knee_angle_left + biomech_metrics.knee_angle_right) / 2,
+            'trunk_angle_deg': biomech_metrics.back_angle,
+            'hip_angle_deg': biomech_metrics.hip_angle,
+            'ankle_angle_deg': (getattr(biomech_metrics, 'ankle_angle_left', 0) + getattr(biomech_metrics, 'ankle_angle_right', 0)) / 2,
+            'movement_phase': movement_phase,
+            'valgus_deviation_deg': getattr(biomech_metrics, 'valgus_deviation', 0),
+            'depth_achieved': 1 if biomech_metrics.knee_angle_left < 100 and biomech_metrics.knee_angle_right < 100 else 0,
+            'trunk_flex_excessive': 1 if biomech_metrics.back_angle > 40 else 0,
             'landmarks_visible_count': landmarks_count
         }
         
         self.data_logger.log_evaluation_frame(frame_data)
+
+    def _log_evaluation_rep_automatically(self, form_analysis: dict, rep_number: int):
+        """Automatically log evaluation rep data"""
+        if not self.data_logger:
+            return
+            
+        rep_data = {
+            'rep_id': rep_number,
+            'start_timestamp_ms': int((time.time() - 3) * 1000),  # Estimate
+            'bottom_timestamp_ms': int((time.time() - 1.5) * 1000),  # Estimate
+            'end_timestamp_ms': int(time.time() * 1000),
+            'duration_ms': 3000,  # Estimate - you can make this more accurate
+            'min_knee_angle_deg': form_analysis.get('component_scores', {}).get('depth', {}).get('result', {}).get('min_knee_angle', 90),
+            'max_trunk_flex_deg': form_analysis.get('component_scores', {}).get('safety', {}).get('result', {}).get('max_back_angle', 0),
+            'max_valgus_dev_deg': form_analysis.get('component_scores', {}).get('safety', {}).get('result', {}).get('max_valgus_deviation', 0),
+            'depth_fault_flag': 1 if len([f for f in form_analysis.get('faults', []) if 'depth' in f.lower()]) > 0 else 0,
+            'valgus_fault_flag': 1 if len([f for f in form_analysis.get('faults', []) if 'valgus' in f.lower()]) > 0 else 0,
+            'trunk_fault_flag': 1 if len([f for f in form_analysis.get('faults', []) if 'trunk' in f.lower() or 'back' in f.lower()]) > 0 else 0,
+            'form_score_percent': int(form_analysis.get('score', 85)),
+            'stability_index_knee': form_analysis.get('component_scores', {}).get('stability', {}).get('score', 0.0),
+            'stability_index_trunk': form_analysis.get('component_scores', {}).get('stability', {}).get('score', 0.0),
+            'aot_valgus_ms_deg': 0,  # Would need frame-by-frame calculation
+            'aot_trunk_ms_deg': 0,   # Would need frame-by-frame calculation
+            'ai_rep_detected': 1
+        }
         
-        # Log rep completion if rep just finished
-        if hasattr(self, '_last_rep_count'):
-            current_rep_count = metrics.get('rep_count', 0)
-            if current_rep_count > self._last_rep_count:
-                # Rep completed, log rep data
-                rep_data = {
-                    'start_timestamp_ms': int((time.time() - 3) * 1000),  # Estimate
-                    'bottom_timestamp_ms': int((time.time() - 1.5) * 1000),  # Estimate
-                    'end_timestamp_ms': int(time.time() * 1000),
-                    'duration_ms': 3000,  # Estimate
-                    'min_knee_angle_deg': metrics.get('min_knee_angle', 90),
-                    'max_trunk_flex_deg': metrics.get('max_back_angle', 0),
-                    'max_valgus_dev_deg': metrics.get('max_valgus_deviation', 0),
-                    'depth_fault_flag': 1 if metrics.get('depth_percentage', 1.0) < 0.8 else 0,
-                    'valgus_fault_flag': 1 if metrics.get('valgus_deviation', 0) > 10 else 0,
-                    'trunk_fault_flag': 1 if metrics.get('back_angle', 0) > 40 else 0,
-                    'form_score_percent': int(metrics.get('form_score', 85)),
-                    'ai_rep_detected': 1
-                }
-                
-                rep_id = self.data_logger.log_evaluation_rep(rep_data)
-                print(f"📊 Evaluation rep logged: {rep_id}")
-        
-        # Update rep count tracking
-        self._last_rep_count = metrics.get('rep_count', 0)
-    
-    def _log_cue_if_evaluation_active(self, cue_type: str, rep_id: int, movement_phase: str):
-        """Log cue/feedback data if evaluation session is active"""
-        if not hasattr(self, '_evaluation_active') or not self._evaluation_active:
+        self.data_logger.log_evaluation_rep(rep_data)
+
+    def _log_evaluation_cue_automatically(self, feedback_type: str, rep_id: int, movement_phase: str):
+        """Automatically log evaluation cue data"""
+        if not self.data_logger:
             return
             
         cue_data = {
             'cue_timestamp_ms': int(time.time() * 1000),
             'rep_id': rep_id,
-            'cue_type': cue_type.lower() if isinstance(cue_type, str) else 'general',
-            'cue_message': f"Feedback for {cue_type}" if isinstance(cue_type, str) else 'General feedback',
+            'cue_type': feedback_type.lower() if isinstance(feedback_type, str) else 'general',
+            'cue_message': f"Feedback for {feedback_type}" if isinstance(feedback_type, str) else 'General feedback',
             'movement_phase_at_cue': movement_phase,
             'in_actionable_window': 1,  # Assume feedback is actionable
-            'reaction_detected': 0,  # Would need additional tracking for this
-            'reaction_latency_ms': 0,  # Would need additional tracking for this
-            'correction_magnitude_deg': 0  # Would need additional tracking for this
+            'reaction_detected': 0,     # Would need additional tracking
+            'reaction_latency_ms': 0,   # Would need additional tracking
+            'correction_magnitude_deg': 0  # Would need additional tracking
         }
         
-        try:
-            cue_id = self.data_logger.log_evaluation_cue(cue_data)
-            print(f"📊 Evaluation cue logged: {cue_id} - {cue_type}")
-        except Exception as e:
-            print(f"❌ Error logging evaluation cue: {e}")
+        self.data_logger.log_evaluation_cue(cue_data)

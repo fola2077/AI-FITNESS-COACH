@@ -1,0 +1,34 @@
+AI Fitness Coach - Session Report
+===================================================
+
+Session ID: session_20250909_164846_kenea
+User: kenea
+Date: 2025-09-09T16:48:46.986632
+Duration: 62.2 seconds
+
+Performance Summary:
+- Total Reps: 11
+- Average Score: 75.5/100
+- Best Score: 88.0/100
+- Session Quality: 100.0/100
+- Improvement: -13.6
+- Fatigue Detected: No
+
+Data Logged:
+- Session Records: 1
+- Rep Records: 11
+- Frame Records: 431
+- ML Training Records: 431
+
+Rep-by-Rep Breakdown:
+  Rep 1: Score 86.0, Faults 2, Duration 0.7s
+  Rep 2: Score 81.0, Faults 3, Duration 0.7s
+  Rep 3: Score 79.0, Faults 3, Duration 0.8s
+  Rep 4: Score 83.0, Faults 2, Duration 0.7s
+  Rep 5: Score 81.0, Faults 3, Duration 0.9s
+  Rep 6: Score 86.0, Faults 2, Duration 1.0s
+  Rep 7: Score 87.0, Faults 1, Duration 1.4s
+  Rep 8: Score 0.0, Faults 0, Duration 0.0s
+  Rep 9: Score 75.0, Faults 4, Duration 1.4s
+  Rep 10: Score 84.0, Faults 2, Duration 1.1s
+  Rep 11: Score 88.0, Faults 1, Duration 1.4s
