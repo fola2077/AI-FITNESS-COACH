@@ -35,12 +35,14 @@ class DataLogCleaner:
             "data/logs/sessions/*.csv",
             "data/logs/reps/*.csv", 
             "data/logs/biomechanics/*.csv",
-            "data/logs/ml_training/*.csv"
+            "data/logs/ml_training/*.csv",
+            "data/logs/evaluation/**/*.csv"
         ]
         
         self.report_patterns = [
             "data/logs/session_report_*.txt",
-            "data/logs/data_summary_report_*.json"
+            "data/logs/data_summary_report_*.json",
+            "data/logs/evaluation/**/*.json"
         ]
         
         # Files/patterns to preserve (unless --all specified)
@@ -62,12 +64,12 @@ class DataLogCleaner:
         # Find CSV files
         for pattern in self.csv_patterns:
             full_pattern = os.path.join(self.base_dir, pattern)
-            files_to_clean['csv_files'].extend(glob.glob(full_pattern))
+            files_to_clean['csv_files'].extend(glob.glob(full_pattern, recursive=True))
         
         # Find report files
         for pattern in self.report_patterns:
             full_pattern = os.path.join(self.base_dir, pattern)
-            files_to_clean['report_files'].extend(glob.glob(full_pattern))
+            files_to_clean['report_files'].extend(glob.glob(full_pattern, recursive=True))
             
         # Find preserved files (for --all option)
         if include_preserved:
@@ -166,7 +168,8 @@ class DataLogCleaner:
             os.path.join(self.logs_dir, "sessions"),
             os.path.join(self.logs_dir, "reps"),
             os.path.join(self.logs_dir, "biomechanics"),
-            os.path.join(self.logs_dir, "ml_training")
+            os.path.join(self.logs_dir, "ml_training"),
+            os.path.join(self.logs_dir, "evaluation")
         ]
         
         for dir_path in dirs_to_check:

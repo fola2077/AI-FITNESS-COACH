@@ -1,0 +1,17 @@
+{
+  "user_name": "P01_A",
+  "participant_id": "P01",
+  "condition": "A",
+  "session_start": 1757411827.0133307,
+  "session_end": 1757411827.0133307,
+  "duration_seconds": 0.0,
+  "total_frames": 5,
+  "total_reps": 1,
+  "total_cues": 1,
+  "thresholds": {
+    "depth_knee_angle_deg": 100,
+    "valgus_deviation_deg": 10,
+    "trunk_flex_deg": 40,
+    "pose_confidence_min": 0.5
+  }
+}

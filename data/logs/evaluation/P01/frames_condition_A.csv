@@ -1,0 +1,1 @@
+timestamp_ms,frame_id,pose_confidence,fps,knee_left_deg,knee_right_deg,knee_avg_deg,trunk_angle_deg,hip_angle_deg,ankle_angle_deg,movement_phase,valgus_deviation_deg,depth_achieved,trunk_flex_excessive,landmarks_visible_count

@@ -133,8 +133,8 @@ class EnhancedFeedbackManager:
             time_since_last = current_time - self.last_feedback_time[category]
             cooldown = self.adaptive_cooldowns.get(category, 3.0)
             
-            # Allow critical messages to bypass cooldown
-            if severity != 'severe' and time_since_last < cooldown:
+            # Allow critical messages and force_voice to bypass cooldown
+            if (severity != 'severe' and not force_voice and time_since_last < cooldown):
                 return False
         
         # Update user context

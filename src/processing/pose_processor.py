@@ -78,6 +78,13 @@ class PoseProcessor:
         self.stability_buffer = deque(maxlen=30)
         self.calibration_frames = 0
         self._last_phase = None  # For rep transition detection
+        self._last_voice_heartbeat = 0.0  # Voice heartbeat timer
+        self._voice_debug_enabled = True
+
+    def _voice_debug(self, message: str):
+        """Prints a standardized voice debug message."""
+        if self._voice_debug_enabled:
+            print(f"[VoiceDebug] {message}")
 
     def start_session(self, source_type='webcam'):
         """Starts a new analysis session."""
@@ -96,6 +103,26 @@ class PoseProcessor:
         else:
             self.session_state = SessionState.ACTIVE
             print("✅ Session started - Video analysis mode")
+
+        # Immediate voice system check (direct engine call preferred to bypass cooldowns)
+        try:
+            if hasattr(self.feedback_manager, 'voice_engine') and self.feedback_manager.voice_engine:
+                if self.feedback_manager.voice_engine.is_available():
+                    # Use immediate speak if available, else fallback to intelligent feedback
+                    if hasattr(self.feedback_manager.voice_engine, 'speak_immediate'):
+                        self.feedback_manager.voice_engine.speak_immediate("Voice system ready.")
+                        self._voice_debug("Startup voice check spoken via speak_immediate().")
+                    else:
+                        ok = self.feedback_manager.add_intelligent_feedback(
+                            fault_type='ENCOURAGEMENT', severity='general', rep_count=0, force_voice=True
+                        )
+                        self._voice_debug(f"Startup voice check via intelligent feedback -> {ok}")
+                else:
+                    self._voice_debug("Voice engine not available at session start.")
+            else:
+                self._voice_debug("Feedback manager has no voice_engine attribute.")
+        except Exception as e:
+            self._voice_debug(f"Voice startup check error: {e}")
 
     def end_session(self):
         """Ends the current session."""
@@ -193,35 +220,60 @@ class PoseProcessor:
         angles = self.pose_detector.calculate_angles(landmarks)
         rep_state = self.rep_counter.update(angles)
 
-        # Check for rep start (when we transition from STANDING to any movement phase)
-        current_phase = rep_state.phase
-        last_phase = getattr(self, '_last_phase', None)
-        
-        if (current_phase != MovementPhase.STANDING and 
-            (last_phase is None or last_phase == MovementPhase.STANDING)):
-            # Starting a new rep - log rep start
+        # Voice heartbeat every 12s before first rep to confirm audio pipeline remains alive
+        if self.rep_counter.rep_count == 0:
+            now = time.time()
+            if now - self._last_voice_heartbeat > 12:
+                try:
+                    if hasattr(self.feedback_manager, 'voice_engine') and self.feedback_manager.voice_engine and self.feedback_manager.voice_engine.is_available():
+                        if hasattr(self.feedback_manager.voice_engine, 'speak_immediate'):
+                            self.feedback_manager.voice_engine.speak_immediate("Voice heartbeat.")
+                            self._voice_debug("Heartbeat spoken via speak_immediate().")
+                        else:
+                            ok_hb = self.feedback_manager.add_intelligent_feedback(
+                                fault_type='ENCOURAGEMENT', severity='general', rep_count=0, force_voice=True
+                            )
+                            self._voice_debug(f"Heartbeat via intelligent feedback -> {ok_hb}")
+                    else:
+                        self._voice_debug("Heartbeat skipped - voice engine unavailable.")
+                except Exception as hb_e:
+                    self._voice_debug(f"Heartbeat error: {hb_e}")
+                finally:
+                    self._last_voice_heartbeat = now
+
+        # Normalize phase (rep_state.phase is a string from RepCounter)
+        raw_phase = rep_state.phase  # e.g. 'standing', 'descent', ...
+        try:
+            current_phase_enum = MovementPhase(raw_phase)
+        except Exception:
+            current_phase_enum = MovementPhase.STANDING
+
+        last_phase_enum = getattr(self, '_last_phase_enum', None)
+
+        if last_phase_enum != current_phase_enum:
+            print(f"[RepDebug] Phase transition: {last_phase_enum.name if last_phase_enum else 'None'} -> {current_phase_enum.name}")
+
+        # Rep start detection: leaving STANDING
+        if (current_phase_enum != MovementPhase.STANDING and
+            (last_phase_enum is None or last_phase_enum == MovementPhase.STANDING)):
             expected_rep_number = self.rep_counter.rep_count + 1
             try:
                 self.data_logger.log_rep_start(expected_rep_number)
-                print(f"✅ Rep {expected_rep_number} started")
-                
-                # VOICE FEEDBACK: Announce rep start
-                print(f"🔊 Providing voice feedback for rep {expected_rep_number} start")
-                self.feedback_manager.add_intelligent_feedback(
+                print(f"✅ Rep {expected_rep_number} started (phase={current_phase_enum.value})")
+                ok_voice = self.feedback_manager.add_intelligent_feedback(
                     fault_type='ENCOURAGEMENT',
-                    severity='rep_start',
+                    severity='general',
                     rep_count=expected_rep_number,
                     force_voice=True
                 )
-                
+                print(f"[VoiceDebug] Rep start voice returned {ok_voice}")
             except Exception as e:
                 print(f"❌ Error starting rep logging: {e}")
-        
-        # Store last phase for transition detection
-        self._last_phase = current_phase
+
+        self._last_phase_enum = current_phase_enum
         
         # Collect metrics for the current rep - SKIP invalid metrics
-        if rep_state.phase != MovementPhase.STANDING or self.current_rep_metrics:
+        if current_phase_enum != MovementPhase.STANDING or self.current_rep_metrics:
             current_metric = self._convert_landmarks_to_metrics(landmarks, self.previous_metrics)
             if current_metric is not None:  # Only add valid metrics
                 self.current_rep_metrics.append(current_metric)
@@ -237,6 +289,25 @@ class PoseProcessor:
                     )
                 except Exception as e:
                     print(f"❌ Error logging frame data: {e}")
+                
+                # Log evaluation data if evaluation session is active
+                try:
+                    eval_metrics = {
+                        'rep_count': rep_state.rep_count,
+                        'phase': phase_str,
+                        'form_score': getattr(current_metric, 'form_score', 85),
+                        'knee_angle_left': angles.get('knee_left', 0),
+                        'knee_angle_right': angles.get('knee_right', 0),
+                        'knee_angle_avg': (angles.get('knee_left', 0) + angles.get('knee_right', 0)) / 2,
+                        'back_angle': angles.get('back', 0),
+                        'hip_angle': angles.get('hip', 0),
+                        'ankle_angle_avg': (angles.get('ankle_left', 0) + angles.get('ankle_right', 0)) / 2,
+                        'valgus_deviation': getattr(current_metric, 'knee_valgus_angle', 0),
+                        'depth_percentage': getattr(current_metric, 'depth_percentage', 0)
+                    }
+                    self._log_evaluation_data_if_active(eval_metrics, landmarks)
+                except Exception as e:
+                    print(f"❌ Error logging evaluation data: {e}")
 
         # When a rep is completed, trigger the full analysis
         if rep_state.rep_completed:
@@ -247,7 +318,7 @@ class PoseProcessor:
         # Prepare live data for the UI
         live_results = {
             'rep_count': self.rep_counter.rep_count,
-            'phase': rep_state.phase,  # phase is already a string, no need for .value
+            'phase': raw_phase,
             'fps': self.fps,
             'session_state': self.session_state.value,
             'landmarks_detected': True,
@@ -312,9 +383,17 @@ class PoseProcessor:
             print(f"🔊 Providing voice feedback for rep {rep_count} completion (score: {overall_score})")
             
             # Announce rep completion with encouraging voice
+            # Choose severity based on form score
+            if overall_score >= 90:
+                completion_severity = 'perfect_form'
+            elif rep_count % 5 == 0:  # Every 5th rep is a milestone
+                completion_severity = 'milestone'
+            else:
+                completion_severity = 'general'
+                
             self.feedback_manager.add_intelligent_feedback(
                 fault_type='ENCOURAGEMENT',
-                severity='completion',
+                severity=completion_severity,
                 rep_count=rep_count,
                 form_score=overall_score,
                 force_voice=True
@@ -446,3 +525,106 @@ class PoseProcessor:
             'session_state': self.session_state.value, 'landmarks_detected': False,
             'processed_frame': frame, 'last_rep_analysis': self.last_rep_analysis
         }
+
+    # ========================================
+    # EVALUATION SESSION METHODS
+    # ========================================
+    
+    def start_evaluation_session(self, user_name: str) -> str:
+        """
+        Start an evaluation session for dissertation research.
+        
+        Args:
+            user_name: Combined participant and condition (e.g., 'P01_A', 'P02_B')
+            
+        Returns:
+            evaluation_session_id: Unique identifier for this evaluation session
+        """
+        # Start evaluation session in data logger
+        eval_session_id = self.data_logger.start_evaluation_session(user_name)
+        
+        # Start regular session 
+        self.start_session()
+        
+        # Store evaluation context in processor
+        self._evaluation_active = True
+        self._evaluation_user_name = user_name
+        
+        print(f"🎯 PoseProcessor evaluation mode activated for {user_name}")
+        return eval_session_id
+    
+    def finalize_evaluation_session(self):
+        """Finalize the evaluation session"""
+        if hasattr(self, '_evaluation_active') and self._evaluation_active:
+            metadata = self.data_logger.finalize_evaluation_session()
+            self._evaluation_active = False
+            print("🎯 PoseProcessor evaluation session completed")
+            return metadata
+        return None
+    
+    def _log_evaluation_data_if_active(self, metrics: dict, landmarks):
+        """Automatically log evaluation data if evaluation session is active"""
+        if not hasattr(self, '_evaluation_active') or not self._evaluation_active:
+            return
+            
+        # Log frame-level data
+        frame_data = {
+            'pose_confidence': landmarks.get('pose_confidence', 0.0) if landmarks else 0.0,
+            'fps': self.fps,
+            'knee_left_deg': metrics.get('knee_angle_left', 0),
+            'knee_right_deg': metrics.get('knee_angle_right', 0),
+            'knee_avg_deg': metrics.get('knee_angle_avg', 0.0),
+            'trunk_angle_deg': metrics.get('back_angle', 0),
+            'hip_angle_deg': metrics.get('hip_angle', 0),
+            'ankle_angle_deg': metrics.get('ankle_angle_avg', 0),
+            'movement_phase': metrics.get('phase', 'standing'),
+            'valgus_deviation_deg': metrics.get('valgus_deviation', 0),
+            'depth_achieved': 1 if metrics.get('depth_percentage', 0) > 0.8 else 0,
+            'trunk_flex_excessive': 1 if metrics.get('back_angle', 0) > 40 else 0,
+            'landmarks_visible_count': len(landmarks) if landmarks else 0
+        }
+        
+        self.data_logger.log_evaluation_frame(frame_data)
+        
+        # Log rep completion if rep just finished
+        if hasattr(self, '_last_rep_count'):
+            current_rep_count = metrics.get('rep_count', 0)
+            if current_rep_count > self._last_rep_count:
+                # Rep completed, log rep data
+                rep_data = {
+                    'start_timestamp_ms': int((time.time() - 3) * 1000),  # Estimate
+                    'bottom_timestamp_ms': int((time.time() - 1.5) * 1000),  # Estimate
+                    'end_timestamp_ms': int(time.time() * 1000),
+                    'duration_ms': 3000,  # Estimate
+                    'min_knee_angle_deg': metrics.get('min_knee_angle', 90),
+                    'max_trunk_flex_deg': metrics.get('max_back_angle', 0),
+                    'max_valgus_dev_deg': metrics.get('max_valgus_deviation', 0),
+                    'depth_fault_flag': 1 if metrics.get('depth_percentage', 1.0) < 0.8 else 0,
+                    'valgus_fault_flag': 1 if metrics.get('valgus_deviation', 0) > 10 else 0,
+                    'trunk_fault_flag': 1 if metrics.get('back_angle', 0) > 40 else 0,
+                    'form_score_percent': int(metrics.get('form_score', 85)),
+                    'ai_rep_detected': 1
+                }
+                
+                rep_id = self.data_logger.log_evaluation_rep(rep_data)
+                print(f"📊 Evaluation rep logged: {rep_id}")
+        
+        # Update rep count tracking
+        self._last_rep_count = metrics.get('rep_count', 0)
+        
+        # Log feedback/cues when given
+        if hasattr(self, '_last_feedback_time'):
+            # Check if new feedback was given (you'd need to track this in your feedback system)
+            current_time = time.time()
+            if hasattr(self, '_new_feedback_given') and self._new_feedback_given:
+                cue_data = {
+                    'cue_timestamp_ms': int(current_time * 1000),
+                    'rep_id': self._last_rep_count + 1,  # Current rep in progress
+                    'cue_type': getattr(self, '_last_cue_type', 'general'),
+                    'cue_message': getattr(self, '_last_cue_message', 'Feedback given'),
+                    'movement_phase_at_cue': metrics.get('phase', 'DESCENT'),
+                    'in_actionable_window': 1
+                }
+                
+                cue_id = self.data_logger.log_evaluation_cue(cue_data)
+                self._new_feedback_given = False  # Reset flag
