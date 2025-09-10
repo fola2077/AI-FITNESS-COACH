@@ -1,0 +1,24 @@
+AI Fitness Coach - Session Report
+===================================================
+
+Session ID: session_20250909_194157_mayob
+User: mayob
+Date: 2025-09-09T19:41:57.334825
+Duration: 48.5 seconds
+
+Performance Summary:
+- Total Reps: 1
+- Average Score: 80.0/100
+- Best Score: 80.0/100
+- Session Quality: 100.0/100
+- Improvement: 0.0
+- Fatigue Detected: No
+
+Data Logged:
+- Session Records: 1
+- Rep Records: 1
+- Frame Records: 36
+- ML Training Records: 36
+
+Rep-by-Rep Breakdown:
+  Rep 1: Score 80.0, Faults 4, Duration 1.2s
